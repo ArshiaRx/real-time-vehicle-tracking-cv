@@ -85,11 +85,7 @@ class OpticalFlowTracker:
                 self.prev_gray, frame_gray, p0, None, **self.lk_params
             )
             
-            # Select good points
-            good_new = p1[st == 1]
-            good_old = p0[st == 1]
-            
-            # Update tracks
+            # Update tracks with optical flow results
             track_idx = 0
             for i, track in enumerate(self.tracks):
                 if not track['active']:
@@ -97,7 +93,8 @@ class OpticalFlowTracker:
                     
                 if st[track_idx] == 1:
                     # Track is good, update it
-                    new_point = good_new[track_idx]
+                    # Use p1 array directly with track_idx to avoid index misalignment
+                    new_point = p1[track_idx][0]
                     track['points'].append(new_point)
                     track['lost_frames'] = 0
                     

@@ -5,6 +5,7 @@ Supports line-based and polygon-based ROI definitions.
 
 import numpy as np
 import cv2
+import time
 
 
 class VehicleCounter:
@@ -27,6 +28,9 @@ class VehicleCounter:
         self.total_count = 0
         self.tracked_objects = {}  # track_id -> {position, side, crossed}
         self.crossing_history = []  # History of crossings
+        self.recent_crossings = []  # Recent crossings with timestamps for display
+        self.crossing_animations = []  # Active crossing animations
+        self.frame_time = 0  # Current frame timestamp
         
     def set_roi(self, roi_type, roi_points):
         """
@@ -142,20 +146,25 @@ class VehicleCounter:
             x, y = position[0], position[1]
             current_positions[track_id] = (x, y)
             
+            # Store class name if available
+            class_name = track.get('class_name', '')
+            
             # Initialize tracking for new objects
             if track_id not in self.tracked_objects:
                 self.tracked_objects[track_id] = {
                     'previous_position': (x, y),
                     'current_position': (x, y),
                     'side': None,
-                    'crossed': False
+                    'crossed': False,
+                    'class_name': class_name
                 }
                 continue
             
-            # Update position
+            # Update position and class name
             obj = self.tracked_objects[track_id]
             obj['previous_position'] = obj['current_position']
             obj['current_position'] = (x, y)
+            obj['class_name'] = class_name  # Update in case it changes
             
             # Check for crossing
             if not obj['crossed']:
@@ -197,10 +206,23 @@ class VehicleCounter:
             self.total_count += 1
             obj['crossed'] = True
             
-            self.crossing_history.append({
+            crossing_event = {
                 'track_id': track_id,
                 'direction': direction,
-                'position': curr_pos
+                'position': curr_pos,
+                'timestamp': time.time(),
+                'class_name': obj.get('class_name', '')
+            }
+            
+            self.crossing_history.append(crossing_event)
+            self.recent_crossings.append(crossing_event)
+            
+            # Add crossing animation
+            self.crossing_animations.append({
+                'position': curr_pos,
+                'direction': direction,
+                'start_time': time.time(),
+                'duration': 1.0  # 1 second animation
             })
     
     def _check_polygon_crossing(self, obj, track_id):
@@ -216,20 +238,49 @@ class VehicleCounter:
             self.count_up += 1
             self.total_count += 1
             obj['crossed'] = True
-            self.crossing_history.append({
+            
+            crossing_event = {
                 'track_id': track_id,
                 'direction': 'enter',
-                'position': curr_pos
+                'position': curr_pos,
+                'timestamp': time.time(),
+                'class_name': obj.get('class_name', '')
+            }
+            
+            self.crossing_history.append(crossing_event)
+            self.recent_crossings.append(crossing_event)
+            
+            # Add crossing animation
+            self.crossing_animations.append({
+                'position': curr_pos,
+                'direction': 'enter',
+                'start_time': time.time(),
+                'duration': 1.0
             })
+            
         # Exited polygon
         elif prev_inside and not curr_inside:
             self.count_down += 1
             self.total_count += 1
             obj['crossed'] = True
-            self.crossing_history.append({
+            
+            crossing_event = {
                 'track_id': track_id,
                 'direction': 'exit',
-                'position': curr_pos
+                'position': curr_pos,
+                'timestamp': time.time(),
+                'class_name': obj.get('class_name', '')
+            }
+            
+            self.crossing_history.append(crossing_event)
+            self.recent_crossings.append(crossing_event)
+            
+            # Add crossing animation
+            self.crossing_animations.append({
+                'position': curr_pos,
+                'direction': 'exit',
+                'start_time': time.time(),
+                'duration': 1.0
             })
     
     def get_counts(self):
@@ -245,6 +296,82 @@ class VehicleCounter:
             'down': self.count_down
         }
     
+    def get_recent_crossings(self, n=5, max_age=3.0):
+        """
+        Get recent crossing events.
+        
+        Args:
+            n: Maximum number of crossings to return
+            max_age: Maximum age in seconds for crossings to include
+            
+        Returns:
+            list: Recent crossing events
+        """
+        current_time = time.time()
+        
+        # Filter crossings by age
+        recent = [c for c in self.recent_crossings 
+                  if current_time - c['timestamp'] <= max_age]
+        
+        # Update the list to only keep recent ones
+        self.recent_crossings = recent
+        
+        # Return last n crossings
+        return recent[-n:] if len(recent) > n else recent
+    
+    def get_active_animations(self):
+        """
+        Get active crossing animations.
+        
+        Returns:
+            list: Active animations with progress
+        """
+        current_time = time.time()
+        active = []
+        
+        for anim in self.crossing_animations[:]:
+            elapsed = current_time - anim['start_time']
+            progress = elapsed / anim['duration']
+            
+            if progress < 1.0:
+                anim_data = anim.copy()
+                anim_data['progress'] = progress
+                active.append(anim_data)
+            else:
+                # Remove completed animations
+                self.crossing_animations.remove(anim)
+        
+        return active
+    
+    def get_distance_to_roi(self, position):
+        """
+        Calculate distance from a position to the ROI.
+        
+        Args:
+            position: (x, y) tuple or array
+            
+        Returns:
+            float: Distance to ROI
+        """
+        if not self.roi_points or len(self.roi_points) < 2:
+            return float('inf')
+        
+        if self.roi_type == 'line' and len(self.roi_points) == 2:
+            # Distance to line segment
+            return abs(self._point_to_line_distance(position, self.roi_points[0], self.roi_points[1]))
+        elif self.roi_type == 'polygon' and len(self.roi_points) >= 3:
+            # Distance to nearest polygon edge
+            min_dist = float('inf')
+            n = len(self.roi_points)
+            for i in range(n):
+                p1 = self.roi_points[i]
+                p2 = self.roi_points[(i + 1) % n]
+                dist = abs(self._point_to_line_distance(position, p1, p2))
+                min_dist = min(min_dist, dist)
+            return min_dist
+        
+        return float('inf')
+    
     def reset_counts(self):
         """Reset all counters."""
         self.count_up = 0
@@ -252,4 +379,6 @@ class VehicleCounter:
         self.total_count = 0
         self.tracked_objects = {}
         self.crossing_history = []
+        self.recent_crossings = []
+        self.crossing_animations = []
 

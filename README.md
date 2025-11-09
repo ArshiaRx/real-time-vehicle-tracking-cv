@@ -64,6 +64,24 @@ python main.py --webcam
 
 ### Advanced Options
 
+Process video with YOLO detection (recommended for accuracy):
+
+```bash
+python main.py --video data/sample_video.mp4 --yolo
+```
+
+Tune YOLO detection parameters:
+
+```bash
+python main.py --video data/sample_video.mp4 --yolo --confidence 0.5 --min-box-size 30
+```
+
+Use custom direction labels:
+
+```bash
+python main.py --video data/sample_video.mp4 --direction-up "Northbound" --direction-down "Southbound"
+```
+
 Process video with output saving:
 
 ```bash
@@ -88,12 +106,23 @@ Process without display (faster for batch processing):
 python main.py --video data/sample_video.mp4 --no-display
 ```
 
+Adjust playback speed:
+
+```bash
+python main.py --video data/sample_video.mp4 --speed 2.0  # 2x speed
+```
+
 ### Interactive Controls
 
 When processing video with display:
 
 - **SPACE**: Pause/Resume playback
 - **'s'**: Step frame (when paused)
+- **'t'**: Toggle track visibility
+- **'v'**: Toggle verbose mode (show all track IDs)
+- **'m'**: Toggle minimal mode (hide tracks)
+- **'l'**: Toggle legend panel (color/symbol explanations)
+- **'h'**: Toggle help panel
 - **'r'**: Reset counters
 - **'q' or ESC**: Quit
 
@@ -192,6 +221,100 @@ You can modify tracking parameters in the source code:
 - Ensure ROI is properly defined
 - Check that objects actually cross the ROI
 - For line ROI, ensure objects move perpendicular to the line
+
+## Detection Limitations & Known Issues
+
+### Color and Contrast Challenges
+
+**Similar-Colored Vehicles**: The optical flow-based tracking system may struggle to distinguish vehicles with similar colors (especially gray vehicles) or when vehicles blend with the road surface. This occurs because:
+
+- Optical flow relies on detecting visual features (corners, edges, texture)
+- Similar colors reduce contrast, making feature detection difficult
+- Gray vehicles on gray pavement create minimal visual boundaries
+
+**Mitigation Strategies**:
+- Use YOLO detection mode (`--yolo` flag) for more robust vehicle detection
+- Increase the feature detection quality threshold (adjust `qualityLevel` parameter)
+- Ensure proper lighting and camera angles to maximize contrast
+- Consider adjusting `--confidence` and `--min-box-size` parameters when using YOLO
+
+### Occlusion and Proximity
+
+**Closely Spaced Vehicles**: When vehicles are too close together or overlap, the system may:
+
+- Merge multiple vehicles into a single track
+- Lose track of partially occluded vehicles
+- Undercount vehicles in dense traffic
+
+**Why This Happens**:
+- Optical flow features from multiple vehicles can be merged
+- Track management may consolidate nearby tracks
+- Occlusions break the continuous feature flow
+
+**Mitigation Strategies**:
+- Use YOLO mode for better separation of individual vehicles
+- Position camera at angles that minimize occlusion
+- Adjust ROI placement to count vehicles before they cluster
+- Tune `min_distance` parameter in feature detection
+
+### YOLO Mode vs Optical Flow Mode
+
+**Optical Flow Mode** (Default):
+- ✅ Fast processing, no ML model required
+- ✅ Works well for separated, moving objects
+- ❌ Struggles with similar colors and low contrast
+- ❌ May miss stationary or slow-moving vehicles
+- ❌ Feature-dependent (requires texture/edges)
+
+**YOLO Mode** (`--yolo` flag):
+- ✅ Accurate vehicle detection regardless of color
+- ✅ Better handling of occlusions and dense traffic
+- ✅ Can detect stationary vehicles
+- ✅ Classifies vehicle types (car, truck, bus, motorcycle)
+- ❌ Requires more computational resources
+- ❌ Requires `ultralytics` package installation
+- ❌ May have false positives in complex scenes
+
+**Recommendation**: For production traffic monitoring with varied vehicle colors and densities, use YOLO mode with tuned confidence threshold:
+
+```bash
+python main.py --video data/traffic.mp4 --yolo --confidence 0.5 --min-box-size 30
+```
+
+### Understanding Direction Labels
+
+The system uses "Up" and "Down" (or custom labels via `--direction-up` and `--direction-down`) to indicate crossing directions. These labels are **mathematical, not geographic**:
+
+- **"Up"**: Vehicles crossing from negative to positive side of the line (shown with blue ▲ arrow during ROI selection)
+- **"Down"**: Vehicles crossing from positive to negative side (shown with orange ▼ arrow during ROI selection)
+
+**Important**: The direction depends on how you draw the counting line. To ensure directions match your expectations:
+
+1. During ROI selection, observe the directional arrows showing which side is "Up" vs "Down"
+2. Use custom labels for clarity: `--direction-up "Northbound" --direction-down "Southbound"`
+3. Redraw the ROI if directions are reversed
+
+### Color Coding System
+
+**Bounding Box Colors** (when tracking is displayed):
+- **Green**: Normal tracking - vehicle is actively tracked
+- **Yellow**: Recently crossed ROI - vehicle crossed the counting line within the last 3 seconds
+
+**Note**: Colors indicate **crossing status**, not vehicle type. Press 'L' during playback to view the legend panel explaining all colors and symbols.
+
+### Performance Considerations
+
+**Frame Rate Impact**: Detection accuracy decreases with:
+- Low frame rates (<15 FPS)
+- Motion blur from fast-moving vehicles
+- Poor lighting conditions
+- Low-resolution video (<720p)
+
+**Optimal Conditions**:
+- 30+ FPS video
+- 1080p or higher resolution
+- Good lighting (daytime or well-lit nighttime)
+- Camera positioned for clear, unobstructed view of ROI
 
 ## Future Enhancements
 
