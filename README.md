@@ -2,31 +2,28 @@
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-green.svg)
-![License](https://img.shields.io/badge/License-Educational-orange.svg)
-![Status](https://img.shields.io/badge/Status-Active-success.svg)
 
-A production-ready Python-based video tracking system that uses optical flow for real-time object/vehicle tracking, with Kalman filtering for smooth trajectory prediction and intelligent vehicle counting across user-defined regions of interest (ROI).
+A video tracking system that uses optical flow to track vehicles in real-time. It includes Kalman filtering for smoother tracking and can count vehicles crossing a line or area you define in the video.
 
 ## Demo
 
-Check out the sample tracked video in `output/sample_traffic_test_tracked.mp4` to see the system in action! The system successfully tracks multiple vehicles, maintains stable trajectories using Kalman filtering, and accurately counts vehicles crossing the ROI.
+Check out the sample tracked video in `output/sample_traffic_test_tracked.mp4` to see how it works.
 
-## Key Features
+## Features
 
-- **Optical Flow Tracking**: Implements Lucas-Kanade pyramidal optical flow for robust sparse feature tracking
-- **Kalman Filtering**: Smooth trajectory prediction with constant velocity motion model for noise reduction
-- **Vehicle Counting**: Intelligent counting system for vehicles crossing user-defined regions of interest
-- **Flexible ROI**: Supports both line-based and polygon-based ROI definitions for versatile deployment
-- **Real-time Processing**: Efficient processing pipeline for video files or live webcam feeds
-- **Professional Visualization**: Annotated output with color-coded tracks, ROI overlays, and real-time statistics
+- **Optical Flow Tracking**: Uses Lucas-Kanade optical flow to track features in the video
+- **Kalman Filtering**: Smooths out the tracking using Kalman filters to reduce jitter
+- **Vehicle Counting**: Counts vehicles that cross your defined region of interest
+- **Flexible ROI**: Draw either a line or a polygon to define where to count vehicles
+- **Real-time Processing**: Works with video files or live webcam feeds
+- **Visualization**: Shows tracks with different colors, the ROI overlay, and live statistics
 
-## Technologies Used
+## Technologies
 
-- **Computer Vision**: OpenCV, Lucas-Kanade Optical Flow, Feature Detection
-- **State Estimation**: Kalman Filtering (FilterPy), Motion Prediction
-- **Scientific Computing**: NumPy, SciPy
-- **Data Visualization**: Matplotlib
-- **Video Processing**: Real-time frame processing and encoding
+- OpenCV for computer vision and optical flow
+- FilterPy for Kalman filtering
+- NumPy and SciPy for calculations
+- Matplotlib for visualization
 
 ## Requirements
 
@@ -156,202 +153,142 @@ Project/
 └── README.md                        # This file
 ```
 
-## Technical Implementation
+## How It Works
 
-### Core Algorithms
+### Optical Flow Tracking
 
-#### 1. Lucas-Kanade Optical Flow
-The system implements pyramidal Lucas-Kanade optical flow for robust feature tracking:
+The system uses Lucas-Kanade optical flow to track movement in the video. It detects good features to track (corners and edges) using Shi-Tomasi corner detection, then follows those features frame by frame. The tracks are managed automatically - new ones start when features are detected, and old ones end when features are lost.
 
-- **Feature Detection**: Shi-Tomasi corner detection via `cv2.goodFeaturesToTrack`
-  - Quality level threshold for reliable corner detection
-  - Minimum distance constraint between features
-- **Optical Flow Calculation**: Pyramidal implementation using `cv2.calcOpticalFlowPyrLK`
-  - Multi-scale pyramid approach for handling large displacements
-  - Sub-pixel accuracy for precise tracking
-- **Track Management**: Dynamic track lifecycle management
-  - Automatic track initialization and termination
-  - Lost track recovery mechanisms
+### Kalman Filtering
 
-#### 2. Kalman Filtering
-Each tracked object maintains an independent Kalman filter for smooth trajectory estimation:
+Each tracked object gets its own Kalman filter that predicts where it will be in the next frame based on position and velocity. This smooths out the tracking and handles noise from the optical flow. The filter uses a constant velocity model and gets updated with each new observation.
 
-- **State Space Model**: 4D state vector [x, y, vx, vy]
-  - Position (x, y) and velocity (vx, vy) components
-- **Motion Model**: Constant velocity assumption with process noise
-- **Prediction Step**: Forward propagation based on motion dynamics
-- **Update Step**: Measurement correction using optical flow observations
-- **Noise Modeling**: Tuned process and measurement noise covariance matrices
+### Vehicle Counting
 
-#### 3. Intelligent Vehicle Counting
-Geometric algorithms for accurate vehicle detection across ROI:
+For counting, you can draw either a line or a polygon on the video. The system checks when tracked objects cross this boundary:
 
-- **Line-Based ROI**: 
-  - Signed distance calculation from track to line
-  - Zero-crossing detection for boundary traversal
-- **Polygon-Based ROI**: 
-  - Point-in-polygon tests using ray casting algorithm
-  - State transition detection (inside/outside)
-- **Direction Classification**: Bidirectional counting with directional statistics
+- **Line ROI**: Detects when a track crosses from one side of the line to the other
+- **Polygon ROI**: Detects when a track enters or exits the polygon area
+- Direction is tracked too, so you can count vehicles going in different directions separately
 
-## Configuration
+## Tweaking Parameters
 
-You can modify tracking parameters in the source code:
+If you want to adjust how the tracking works, you can modify these in the source code:
 
-- **Optical Flow Parameters**: `OpticalFlowTracker.lk_params` and `feature_params`
-- **Kalman Filter Parameters**: `ObjectKalmanFilter.__init__()` (process_noise, measurement_noise)
-- **Track Management**: `max_track_length`, `min_track_length` in `OpticalFlowTracker`
+- Optical flow settings: `lk_params` and `feature_params` in `OpticalFlowTracker`
+- Kalman filter noise parameters: in `ObjectKalmanFilter.__init__()`
+- Track length settings: `max_track_length` and `min_track_length` in `OpticalFlowTracker`
 
 ## Troubleshooting
 
-### No tracks detected
+**No tracks showing up?**
 
-- Ensure the video has sufficient motion
-- Try adjusting `qualityLevel` in `feature_params` (lower = more features)
-- Check that the video is not too dark or blurry
+- Make sure there's actually movement in the video
+- Try lowering `qualityLevel` in `feature_params` to detect more features
+- Check if the video is too dark or blurry
 
-### Tracks are jittery
+**Tracks look jittery?**
 
-- Enable Kalman filtering (default)
-- Adjust Kalman filter noise parameters
-- Increase `winSize` in `lk_params` for more stable tracking
+- Kalman filtering should be on by default - if you disabled it, turn it back on
+- Try increasing `winSize` in `lk_params` for smoother tracking
 
-### Counting not working
+**Counting not working?**
 
-- Ensure ROI is properly defined
-- Check that objects actually cross the ROI
-- For line ROI, ensure objects move perpendicular to the line
+- Make sure you drew the ROI correctly
+- Check that vehicles actually cross through your line/polygon
+- For line counting, works best when vehicles move across the line (not parallel to it)
 
-## Detection Limitations & Known Issues
+## Known Issues and Limitations
 
-### Color and Contrast Challenges
+### Similar Colors
 
-**Similar-Colored Vehicles**: The optical flow-based tracking system may struggle to distinguish vehicles with similar colors (especially gray vehicles) or when vehicles blend with the road surface. This occurs because:
+The optical flow tracker can struggle when vehicles have similar colors to each other or to the road (especially gray vehicles on gray pavement). This happens because optical flow needs to detect corners and edges, which are harder to find when there's low contrast. If you're having this issue, try using YOLO mode with `--yolo` flag - it's better at detecting vehicles regardless of color.
 
-- Optical flow relies on detecting visual features (corners, edges, texture)
-- Similar colors reduce contrast, making feature detection difficult
-- Gray vehicles on gray pavement create minimal visual boundaries
+### Crowded Traffic
 
-**Mitigation Strategies**:
-- Use YOLO detection mode (`--yolo` flag) for more robust vehicle detection
-- Increase the feature detection quality threshold (adjust `qualityLevel` parameter)
-- Ensure proper lighting and camera angles to maximize contrast
-- Consider adjusting `--confidence` and `--min-box-size` parameters when using YOLO
+When vehicles are too close together or overlapping, the system might:
 
-### Occlusion and Proximity
+- Merge multiple vehicles into one track
+- Lose track of vehicles that get blocked
+- Undercount in heavy traffic
 
-**Closely Spaced Vehicles**: When vehicles are too close together or overlap, the system may:
-
-- Merge multiple vehicles into a single track
-- Lose track of partially occluded vehicles
-- Undercount vehicles in dense traffic
-
-**Why This Happens**:
-- Optical flow features from multiple vehicles can be merged
-- Track management may consolidate nearby tracks
-- Occlusions break the continuous feature flow
-
-**Mitigation Strategies**:
-- Use YOLO mode for better separation of individual vehicles
-- Position camera at angles that minimize occlusion
-- Adjust ROI placement to count vehicles before they cluster
-- Tune `min_distance` parameter in feature detection
+This happens because the optical flow features can blend together. YOLO mode helps with this too, or you can try positioning the counting line where vehicles are more spread out.
 
 ### YOLO Mode vs Optical Flow Mode
 
-**Optical Flow Mode** (Default):
-- ✅ Fast processing, no ML model required
-- ✅ Works well for separated, moving objects
-- ❌ Struggles with similar colors and low contrast
-- ❌ May miss stationary or slow-moving vehicles
-- ❌ Feature-dependent (requires texture/edges)
+**Optical Flow Mode** (default):
+
+- Pros: Fast, no ML model needed, works well for separated moving objects
+- Cons: Struggles with similar colors, may miss slow vehicles, needs visible texture/edges
 
 **YOLO Mode** (`--yolo` flag):
-- ✅ Accurate vehicle detection regardless of color
-- ✅ Better handling of occlusions and dense traffic
-- ✅ Can detect stationary vehicles
-- ✅ Classifies vehicle types (car, truck, bus, motorcycle)
-- ❌ Requires more computational resources
-- ❌ Requires `ultralytics` package installation
-- ❌ May have false positives in complex scenes
 
-**Recommendation**: For production traffic monitoring with varied vehicle colors and densities, use YOLO mode with tuned confidence threshold:
+- Pros: Better at detecting all vehicles regardless of color, handles crowded scenes better, can detect stopped vehicles
+- Cons: Slower, needs the ultralytics package installed
+
+For videos with lots of traffic or vehicles that are similar colors, YOLO mode works better:
 
 ```bash
 python main.py --video data/traffic.mp4 --yolo --confidence 0.5 --min-box-size 30
 ```
 
-### Understanding Direction Labels
+### Direction Labels
 
-The system uses "Up" and "Down" (or custom labels via `--direction-up` and `--direction-down`) to indicate crossing directions. These labels are **mathematical, not geographic**:
+The system labels crossing directions as "Up" and "Down" based on which side of the line the vehicle crosses. These are relative to how you draw the line, not geographic directions:
 
-- **"Up"**: Vehicles crossing from negative to positive side of the line (shown with blue ▲ arrow during ROI selection)
-- **"Down"**: Vehicles crossing from positive to negative side (shown with orange ▼ arrow during ROI selection)
+- **"Up"**: Crossing from one side to the other (shown with blue ▲ arrow when you draw the ROI)
+- **"Down"**: Crossing the opposite way (shown with orange ▼ arrow)
 
-**Important**: The direction depends on how you draw the counting line. To ensure directions match your expectations:
+If the directions seem backwards, just redraw the line the other way. You can also use custom labels like `--direction-up "Northbound"` to make it clearer.
 
-1. During ROI selection, observe the directional arrows showing which side is "Up" vs "Down"
-2. Use custom labels for clarity: `--direction-up "Northbound" --direction-down "Southbound"`
-3. Redraw the ROI if directions are reversed
+### Colors
 
-### Color Coding System
+When you're watching the tracking:
 
-**Bounding Box Colors** (when tracking is displayed):
-- **Green**: Normal tracking - vehicle is actively tracked
-- **Yellow**: Recently crossed ROI - vehicle crossed the counting line within the last 3 seconds
+- **Green boxes**: Vehicle is being tracked normally
+- **Yellow boxes**: Vehicle just crossed the counting line (within last 3 seconds)
 
-**Note**: Colors indicate **crossing status**, not vehicle type. Press 'L' during playback to view the legend panel explaining all colors and symbols.
+Press 'L' while the video is playing to see the legend with all the colors and symbols.
 
-### Performance Considerations
+### Performance Tips
 
-**Frame Rate Impact**: Detection accuracy decreases with:
-- Low frame rates (<15 FPS)
-- Motion blur from fast-moving vehicles
-- Poor lighting conditions
-- Low-resolution video (<720p)
+The tracking works best with:
 
-**Optimal Conditions**:
-- 30+ FPS video
+- 30+ FPS video (lower frame rates make tracking harder)
 - 1080p or higher resolution
-- Good lighting (daytime or well-lit nighttime)
-- Camera positioned for clear, unobstructed view of ROI
+- Good lighting conditions
+- Clear view of the area you're monitoring
 
-## Future Enhancements
+If your video is blurry, low resolution, or has poor lighting, you might see lower accuracy.
 
-- [ ] Deep learning integration (YOLOv8/YOLOv11) for vehicle detection
-- [ ] Multi-object tracking (MOT) with Hungarian algorithm for data association
-- [ ] Speed estimation using homography and camera calibration
-- [ ] Classification by vehicle type (car, truck, motorcycle)
-- [ ] Cloud deployment with REST API endpoints
-- [ ] Real-time streaming support with RTSP/WebRTC
-- [ ] Database integration for historical analytics
-- [ ] Performance optimization using CUDA/GPU acceleration
+## Future Ideas
 
-## Performance Metrics
+- Add speed estimation using camera calibration
+- Improve vehicle type classification (car, truck, motorcycle, etc.)
+- Support for real-time video streams (RTSP)
+- Database integration for storing historical data
+- GPU acceleration for better performance
 
-- **Tracking Accuracy**: High precision with Kalman-smoothed trajectories
-- **Processing Speed**: Real-time capable on modern hardware (30+ FPS on HD video)
-- **Counting Accuracy**: >95% accuracy on clear videos with proper ROI placement
-- **Robustness**: Handles occlusions, lighting changes, and perspective distortion
+## About This Project
 
-## Project Background
-
-This project was developed as part of **CPS843 - Introduction to Computer Vision** at Toronto Metropolitan University (TMU). It demonstrates practical applications of optical flow, state estimation, and geometric computer vision techniques for real-world traffic monitoring scenarios.
+This was created for CPS843 - Introduction to Computer Vision at Toronto Metropolitan University. It's a practical application of optical flow, Kalman filtering, and computer vision techniques for tracking and counting vehicles.
 
 ## Author
 
 **Arshia Rahim**
+
 - Computer Engineering (Software) Student @ Toronto Metropolitan University
 - GitHub: [@ArshiaRx](https://github.com/ArshiaRx)
 - LinkedIn: [in/arshia-rahim](https://www.linkedin.com/in/arshia-rahim)
 
 ## License
 
-This project is for educational purposes. Feel free to reference and learn from the code, but please credit appropriately and avoid direct copying in academic contexts.
+Educational project - feel free to learn from it and reference it, but please don't copy it directly for your own coursework.
 
 ## References
 
-- Lucas, B. D., & Kanade, T. (1981). *An iterative image registration technique with an application to stereo vision.* IJCAI.
-- Kalman, R. E. (1960). *A new approach to linear filtering and prediction problems.* Journal of Basic Engineering.
-- Shi, J., & Tomasi, C. (1994). *Good features to track.* IEEE CVPR.
+I used these papers as references for the algorithms:
 
+- Lucas & Kanade (1981) - Lucas-Kanade optical flow
+- Kalman (1960) - Kalman filtering
+- Shi & Tomasi (1994) - Good features to track
