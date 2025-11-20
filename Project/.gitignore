@@ -1,1 +1,61 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
+# Large video files (GitHub limit is 100MB)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.mpeg
+*.mpg
+*.wmv
+*.flv
+
+# Large model files
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv
+
+# Output files
+output/
+*.zip
+
+# Data files (keep structure but not large files)
+data/*.mp4
+data/*.avi
+data/*.mov
+
+# Progress report generated files
+*.html
+*.aux
+*.log
+*.out

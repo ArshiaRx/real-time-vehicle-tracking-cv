@@ -26,8 +26,8 @@ class VehicleCounter:
         self.count_up = 0  # Vehicles crossing in positive direction
         self.count_down = 0  # Vehicles crossing in negative direction
         self.total_count = 0
-        self.tracked_objects = {}  # track_id -> {position, side, crossed}
-        self.crossing_history = []  # History of crossings
+        self.tracked_objects = {}  # track_id -> {position, side, crossed, class_name, color}
+        self.crossing_history = []  # History of crossings with full details
         self.recent_crossings = []  # Recent crossings with timestamps for display
         self.crossing_animations = []  # Active crossing animations
         self.frame_time = 0  # Current frame timestamp
@@ -146,8 +146,9 @@ class VehicleCounter:
             x, y = position[0], position[1]
             current_positions[track_id] = (x, y)
             
-            # Store class name if available
+            # Store class name and color if available
             class_name = track.get('class_name', '')
+            color_info = track.get('color', {})
             
             # Initialize tracking for new objects
             if track_id not in self.tracked_objects:
@@ -157,15 +158,18 @@ class VehicleCounter:
                     'side': None,
                     'crossed': False,
                     'class_name': class_name,
+                    'color': color_info,
                     'frames_since_crossing': 0
                 }
                 continue
             
-            # Update position and class name
+            # Update position, class name, and color
             obj = self.tracked_objects[track_id]
             obj['previous_position'] = obj['current_position']
             obj['current_position'] = (x, y)
             obj['class_name'] = class_name  # Update in case it changes
+            if color_info:  # Update color if available
+                obj['color'] = color_info
             
             # Increment frames since crossing (for potential reset logic)
             if 'frames_since_crossing' not in obj:
@@ -222,7 +226,8 @@ class VehicleCounter:
                 'direction': direction,
                 'position': curr_pos,
                 'timestamp': time.time(),
-                'class_name': obj.get('class_name', '')
+                'class_name': obj.get('class_name', ''),
+                'color': obj.get('color', {})
             }
             
             self.crossing_history.append(crossing_event)
@@ -256,7 +261,8 @@ class VehicleCounter:
                 'direction': 'enter',
                 'position': curr_pos,
                 'timestamp': time.time(),
-                'class_name': obj.get('class_name', '')
+                'class_name': obj.get('class_name', ''),
+                'color': obj.get('color', {})
             }
             
             self.crossing_history.append(crossing_event)
@@ -282,7 +288,8 @@ class VehicleCounter:
                 'direction': 'exit',
                 'position': curr_pos,
                 'timestamp': time.time(),
-                'class_name': obj.get('class_name', '')
+                'class_name': obj.get('class_name', ''),
+                'color': obj.get('color', {})
             }
             
             self.crossing_history.append(crossing_event)
@@ -307,6 +314,45 @@ class VehicleCounter:
             'total': self.total_count,
             'up': self.count_up,
             'down': self.count_down
+        }
+    
+    def get_vehicle_statistics(self):
+        """
+        Get detailed vehicle statistics including types and colors.
+        
+        Returns:
+            dict: Statistics with type and color breakdowns
+        """
+        type_counts = {}
+        color_counts = {}
+        direction_type_counts = {'up': {}, 'down': {}}
+        direction_color_counts = {'up': {}, 'down': {}}
+        
+        for crossing in self.crossing_history:
+            class_name = crossing.get('class_name', 'unknown')
+            color_name = crossing.get('color', {}).get('name', 'unknown')
+            direction = crossing.get('direction', 'unknown')
+            
+            # Count by type
+            type_counts[class_name] = type_counts.get(class_name, 0) + 1
+            
+            # Count by color
+            color_counts[color_name] = color_counts.get(color_name, 0) + 1
+            
+            # Count by direction and type
+            if direction in direction_type_counts:
+                direction_type_counts[direction][class_name] = direction_type_counts[direction].get(class_name, 0) + 1
+            
+            # Count by direction and color
+            if direction in direction_color_counts:
+                direction_color_counts[direction][color_name] = direction_color_counts[direction].get(color_name, 0) + 1
+        
+        return {
+            'type_counts': type_counts,
+            'color_counts': color_counts,
+            'direction_type_counts': direction_type_counts,
+            'direction_color_counts': direction_color_counts,
+            'total_crossings': len(self.crossing_history)
         }
     
     def get_recent_crossings(self, n=5, max_age=3.0):

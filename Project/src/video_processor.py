@@ -10,6 +10,7 @@ from .optical_flow_tracker import OpticalFlowTracker
 from .kalman_filter import ObjectKalmanFilter
 from .vehicle_counter import VehicleCounter
 from .yolo_detector import YOLODetector
+from .color_detector import ColorDetector
 from .utils import (draw_tracks, draw_roi, draw_counts, draw_kalman_predictions,
                    draw_crossing_event, draw_recent_crossings_panel, 
                    draw_status_panel, draw_controls_help, draw_yolo_detections,
@@ -20,7 +21,7 @@ class VideoProcessor:
     """Main video processing pipeline."""
     
     def __init__(self, use_kalman=True, roi_type='line', roi_points=None, use_yolo=False, 
-                 direction_labels=None, yolo_confidence=0.4, min_box_size=20):
+                 direction_labels=None, yolo_confidence=0.4, min_box_size=20, yolo_model_size='n'):
         """
         Initialize video processor.
         
@@ -32,17 +33,23 @@ class VideoProcessor:
             direction_labels: Tuple of (up_label, down_label) for custom direction names
             yolo_confidence: YOLO confidence threshold (0.0-1.0)
             min_box_size: Minimum bounding box size in pixels
+            yolo_model_size: YOLO model size ('n', 's', 'm', 'l', 'x') - larger = more accurate but slower
         """
         self.use_yolo = use_yolo
         self.direction_labels = direction_labels if direction_labels else ('Up', 'Down')
         self.min_box_size = min_box_size
         
         if use_yolo:
-            self.yolo_detector = YOLODetector(model_size='n', confidence_threshold=yolo_confidence,
+            self.yolo_detector = YOLODetector(model_size=yolo_model_size, confidence_threshold=yolo_confidence,
                                              min_box_size=min_box_size)
             if not self.yolo_detector.available:
                 print("⚠️  YOLOv8 not available, falling back to optical flow")
                 self.use_yolo = False
+            else:
+                # Initialize color detector for YOLO mode
+                self.color_detector = ColorDetector()
+        else:
+            self.color_detector = None
         
         self.optical_flow_tracker = OpticalFlowTracker()
         self.use_kalman = use_kalman and not use_yolo  # Don't need Kalman with YOLO tracking
@@ -80,6 +87,15 @@ class VideoProcessor:
         if self.use_yolo:
             # Use YOLO tracking (more accurate)
             tracks = self.yolo_detector.track(frame)
+            
+            # Add color detection to tracks
+            if self.color_detector:
+                for track in tracks:
+                    bbox = track.get('bbox')
+                    if bbox:
+                        color_info = self.color_detector.detect_vehicle_color(frame, bbox)
+                        track['color'] = color_info
+            
             self.vehicle_counter.update(tracks)
             of_tracks = tracks  # For visualization
         else:
