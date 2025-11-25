@@ -5,7 +5,8 @@ Utility functions for visualization, ROI selection, and configuration.
 import cv2
 import numpy as np
 import time
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
+from collections import defaultdict
 
 
 class ROISelector:
@@ -75,7 +76,7 @@ class ROISelector:
             image: Input image
             
         Returns:
-            list: List of (x, y) points or None if cancelled
+            list: [(x1, y1), (x2, y2), ...] or None if cancelled
         """
         self.image = image.copy()
         self.image_copy = image.copy()
@@ -91,12 +92,10 @@ class ROISelector:
         while True:
             display_img = self.image_copy.copy()
             
-            # Draw polygon
-            if len(self.roi_points) > 0:
+            # Draw current polygon
+            if len(self.roi_points) > 1:
                 pts = np.array(self.roi_points, np.int32)
-                if len(self.roi_points) > 2:
-                    cv2.fillPoly(display_img, [pts], (0, 255, 0, 100))
-                cv2.polylines(display_img, [pts], len(self.roi_points) > 2, (0, 255, 0), 2)
+                cv2.polylines(display_img, [pts], True, (0, 255, 0), 2)
                 for pt in self.roi_points:
                     cv2.circle(display_img, pt, 5, (0, 255, 0), -1)
             
@@ -135,7 +134,7 @@ def draw_tracks(frame, tracks, max_history=10, roi_points=None, display_mode='cl
     
     Args:
         frame: Input frame
-        tracks: List of track dictionaries
+        tracks: List of track dictionaries with 'id', 'position', 'history'
         max_history: Maximum number of history points to draw
         roi_points: ROI points for distance filtering
         display_mode: 'clean', 'verbose', or 'minimal'
@@ -148,19 +147,21 @@ def draw_tracks(frame, tracks, max_history=10, roi_points=None, display_mode='cl
     if display_mode == 'minimal':
         return frame
     
-    # Only show IDs for tracks with sufficient history (reduces clutter)
-    min_track_length_for_display = 3
-    
     if recent_crossing_ids is None:
         recent_crossing_ids = set()
     
     for track in tracks:
-        track_id = track['id']
+        track_id = track.get('id', -1)
         history = track.get('history', [])
-        current_pos = track['position']
-        track_length = track.get('length', len(history))
+        current_pos = track.get('position', None)
         
-        x, y = int(current_pos[0]), int(current_pos[1])
+        if current_pos is None:
+            continue
+        
+        if isinstance(current_pos, np.ndarray):
+            x, y = int(current_pos[0]), int(current_pos[1])
+        else:
+            x, y = int(current_pos[0]), int(current_pos[1])
         
         # Distance filtering in clean mode
         if display_mode == 'clean' and roi_points:
@@ -170,35 +171,31 @@ def draw_tracks(frame, tracks, max_history=10, roi_points=None, display_mode='cl
             if dist > max_distance and track_id not in recent_crossing_ids:
                 continue
         
-        # Draw track history (thinner in clean mode)
+        # Draw track history (trail)
         if len(history) > 1:
             points = np.array(history[-max_history:], dtype=np.int32)
             line_thickness = 2 if display_mode == 'verbose' else 1
+            color = (0, 255, 255) if track_id in recent_crossing_ids else (0, 255, 0)
             for i in range(len(points) - 1):
-                alpha = i / len(points)
-                color = (0, int(255 * alpha), int(255 * (1 - alpha)))
                 cv2.line(frame, tuple(points[i]), tuple(points[i+1]), color, line_thickness)
         
         # Draw current position
         cv2.circle(frame, (x, y), 4, (0, 255, 255), -1)
         
-        # Show IDs only for recently crossed tracks or in verbose mode
-        show_id = (display_mode == 'verbose' and track_length >= min_track_length_for_display) or \
-                  (track_id in recent_crossing_ids)
+        # Show ID only in verbose mode or for recent crossings
+        show_id = (display_mode == 'verbose') or (track_id in recent_crossing_ids)
         
         if show_id:
-            # Include class name if available
+            text = f"ID{track_id}"
             class_name = track.get('class_name', '')
             if class_name:
-                text = f"ID:{track_id} {class_name}"
-            else:
-                text = f"ID:{track_id}"
+                text = f"{text} {class_name}"
             
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.6
-            thickness = 2
+            font_scale = 0.5
+            thickness = 1
             
-            # Get text size for background rectangle
+            # Get text size for background
             (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
             
             # Draw background rectangle for better visibility
@@ -209,20 +206,22 @@ def draw_tracks(frame, tracks, max_history=10, roi_points=None, display_mode='cl
                          (text_x + text_width + 3, text_y + baseline + 3),
                          (0, 0, 0), -1)
             
-            # Draw text with outline for better readability
+            # Draw text
             cv2.putText(frame, text, (text_x, text_y), 
                        font, font_scale, (255, 255, 255), thickness)
     
     return frame
 
 
-def draw_roi(frame, roi_points, roi_type='line', highlight=False, show_direction=True):
+def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=False, show_direction=True):
     """
     Draw ROI on frame with optional highlighting and directional arrows.
+    Supports multiple lines for line ROI type.
     
     Args:
         frame: Input frame
-        roi_points: ROI points
+        roi_points: ROI points (legacy support for single ROI)
+        roi_lines: List of ROI lines (for multiple lines support)
         roi_type: 'line' or 'polygon'
         highlight: Whether to draw highlighted (thicker, brighter)
         show_direction: Whether to show directional arrows (for line ROI)
@@ -230,65 +229,111 @@ def draw_roi(frame, roi_points, roi_type='line', highlight=False, show_direction
     Returns:
         frame: Frame with ROI drawn
     """
-    if not roi_points:
+    # Determine which lines to draw
+    lines_to_draw = []
+    if roi_type == 'line':
+        if roi_lines is not None:
+            # Multiple lines support
+            if isinstance(roi_lines, list) and len(roi_lines) > 0:
+                if isinstance(roi_lines[0][0], (list, tuple)):
+                    # List of lines: [[(x1,y1), (x2,y2)], ...]
+                    lines_to_draw = roi_lines
+                else:
+                    # Single line as flat list: [(x1,y1), (x2,y2)]
+                    lines_to_draw = [roi_lines]
+        elif roi_points is not None and len(roi_points) == 2:
+            # Legacy single line support
+            lines_to_draw = [roi_points]
+    
+    if roi_type == 'line' and len(lines_to_draw) == 0:
         return frame
     
     # Adjust appearance based on highlight
     if highlight:
-        color = (0, 255, 128)  # Brighter green
+        base_color = (0, 255, 128)  # Brighter green
         thickness = 5
         circle_radius = 10
     else:
-        color = (0, 200, 0)  # Darker green
+        base_color = (0, 200, 0)  # Darker green
         thickness = 3
         circle_radius = 8
     
-    if roi_type == 'line' and len(roi_points) == 2:
-        cv2.line(frame, roi_points[0], roi_points[1], color, thickness)
-        cv2.circle(frame, roi_points[0], circle_radius, color, -1)
-        cv2.circle(frame, roi_points[1], circle_radius, color, -1)
-        
-        # Draw directional arrows to show which side is "up" vs "down"
-        if show_direction:
-            x1, y1 = roi_points[0]
-            x2, y2 = roi_points[1]
+    # Define colors for multiple lines (cycle through different colors)
+    line_colors = [
+        (0, 200, 0),    # Green
+        (0, 165, 255),   # Orange
+        (255, 0, 255),  # Magenta
+        (255, 255, 0),  # Cyan
+        (0, 255, 255),  # Yellow
+        (255, 0, 0),    # Blue
+    ]
+    
+    if roi_type == 'line':
+        # Draw all lines
+        for line_index, line in enumerate(lines_to_draw):
+            if len(line) != 2:
+                continue
             
-            # Calculate perpendicular vector to the line
-            dx = x2 - x1
-            dy = y2 - y1
-            length = np.sqrt(dx*dx + dy*dy)
-            if length > 0:
-                # Normalize
-                dx /= length
-                dy /= length
-                
-                # Perpendicular vectors (both sides)
-                perp_x = -dy
-                perp_y = dx
-                
-                # Midpoint of line
+            # Use different color for each line
+            color = line_colors[line_index % len(line_colors)]
+            if highlight:
+                color = tuple(min(255, c + 50) for c in color)  # Brighten for highlight
+            
+            x1, y1 = line[0]
+            x2, y2 = line[1]
+            
+            # Draw line
+            cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
+            cv2.circle(frame, (x1, y1), circle_radius, color, -1)
+            cv2.circle(frame, (x2, y2), circle_radius, color, -1)
+            
+            # Draw line label if multiple lines
+            if len(lines_to_draw) > 1:
                 mid_x = (x1 + x2) // 2
                 mid_y = (y1 + y2) // 2
-                
-                # Offset distance for arrows
-                offset = 50
-                
-                # Draw arrows on both sides
-                # Side 1 (positive side - "UP" direction)
-                arrow_start_1 = (int(mid_x + perp_x * offset), int(mid_y + perp_y * offset))
-                arrow_end_1 = (int(mid_x + perp_x * (offset + 30)), int(mid_y + perp_y * (offset + 30)))
-                cv2.arrowedLine(frame, arrow_start_1, arrow_end_1, (150, 220, 255), 3, tipLength=0.4)
-                cv2.putText(frame, "UP", (int(mid_x + perp_x * (offset + 40)), int(mid_y + perp_y * (offset + 40))),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 220, 255), 2)
-                
-                # Side 2 (negative side - "DOWN" direction)
-                arrow_start_2 = (int(mid_x - perp_x * offset), int(mid_y - perp_y * offset))
-                arrow_end_2 = (int(mid_x - perp_x * (offset + 30)), int(mid_y - perp_y * (offset + 30)))
-                cv2.arrowedLine(frame, arrow_start_2, arrow_end_2, (100, 180, 255), 3, tipLength=0.4)
-                cv2.putText(frame, "DOWN", (int(mid_x - perp_x * (offset + 45)), int(mid_y - perp_y * (offset + 40))),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 180, 255), 2)
-                
-    elif roi_type == 'polygon' and len(roi_points) >= 3:
+                label = f"Line {line_index + 1}"
+                cv2.putText(frame, label, (mid_x - 30, mid_y - 15),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            # Draw directional arrows to show which side is "up" vs "down"
+            if show_direction:
+                # Calculate perpendicular vector to the line
+                dx = x2 - x1
+                dy = y2 - y1
+                length = np.sqrt(dx*dx + dy*dy)
+                if length > 0:
+                    # Normalize
+                    dx /= length
+                    dy /= length
+                    
+                    # Perpendicular vectors (both sides)
+                    perp_x = -dy
+                    perp_y = dx
+                    
+                    # Midpoint of line
+                    mid_x = (x1 + x2) // 2
+                    mid_y = (y1 + y2) // 2
+                    
+                    # Offset distance for arrows (adjust for multiple lines)
+                    offset = 50 + (line_index * 20)  # Stagger arrows for multiple lines
+                    
+                    # Draw arrows on both sides
+                    # Side 1 (positive side - "UP" direction)
+                    arrow_start_1 = (int(mid_x + perp_x * offset), int(mid_y + perp_y * offset))
+                    arrow_end_1 = (int(mid_x + perp_x * (offset + 30)), int(mid_y + perp_y * (offset + 30)))
+                    cv2.arrowedLine(frame, arrow_start_1, arrow_end_1, (150, 220, 255), 3, tipLength=0.4)
+                    cv2.putText(frame, "UP", (int(mid_x + perp_x * (offset + 40)), int(mid_y + perp_y * (offset + 40))),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 220, 255), 2)
+                    
+                    # Side 2 (negative side - "DOWN" direction)
+                    arrow_start_2 = (int(mid_x - perp_x * offset), int(mid_y - perp_y * offset))
+                    arrow_end_2 = (int(mid_x - perp_x * (offset + 30)), int(mid_y - perp_y * (offset + 30)))
+                    cv2.arrowedLine(frame, arrow_start_2, arrow_end_2, (100, 180, 255), 3, tipLength=0.4)
+                    cv2.putText(frame, "DOWN", (int(mid_x - perp_x * (offset + 45)), int(mid_y - perp_y * (offset + 40))),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 180, 255), 2)
+    
+    elif roi_type == 'polygon' and roi_points is not None and len(roi_points) >= 3:
+        color = base_color
         pts = np.array(roi_points, np.int32)
         cv2.polylines(frame, [pts], True, color, thickness)
         for pt in roi_points:
@@ -303,48 +348,33 @@ def draw_counts(frame, counts, position=(15, 40)):
     
     Args:
         frame: Input frame
-        counts: Dictionary with count statistics
-        position: (x, y) position for text
+        counts: Dictionary with 'total', 'up', 'down' counts
+        position: (x, y) position to draw counts
         
     Returns:
         frame: Frame with counts drawn
     """
+    if not counts:
+        return frame
+    
+    total = counts.get('total', 0)
+    up = counts.get('up', 0)
+    down = counts.get('down', 0)
+    
     x, y = position
+    
+    # Background rectangle for better visibility
+    cv2.rectangle(frame, (x - 10, y - 30), (x + 180, y + 80), (0, 0, 0), -1)
+    cv2.rectangle(frame, (x - 10, y - 30), (x + 180, y + 80), (0, 255, 0), 2)
+    
+    # Draw counts
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1.0  # Increased from 0.7
+    font_scale = 0.6
     thickness = 2
-    line_spacing = 35  # Increased spacing between lines
     
-    # Calculate background size
-    text_lines = [
-        f"Total: {counts.get('total', 0)}",
-        f"Up: {counts.get('up', 0)}",
-        f"Down: {counts.get('down', 0)}"
-    ]
-    
-    max_width = 0
-    for text in text_lines:
-        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-        max_width = max(max_width, text_width)
-    
-    # Draw semi-transparent background rectangle
-    bg_height = len(text_lines) * line_spacing + 15
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x-10, y-30), 
-                  (x + max_width + 15, y + bg_height), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-    
-    # Draw border
-    cv2.rectangle(frame, (x-10, y-30), 
-                  (x + max_width + 15, y + bg_height), (0, 255, 0), 2)
-    
-    # Draw text with better spacing
-    cv2.putText(frame, text_lines[0], 
-               (x, y), font, font_scale, (0, 255, 0), thickness)
-    cv2.putText(frame, text_lines[1], 
-               (x, y + line_spacing), font, font_scale, (0, 255, 0), thickness)
-    cv2.putText(frame, text_lines[2], 
-               (x, y + line_spacing * 2), font, font_scale, (0, 255, 0), thickness)
+    cv2.putText(frame, f"Total: {total}", (x, y), font, font_scale, (255, 255, 255), thickness)
+    cv2.putText(frame, f"Up: {up}", (x, y + 25), font, font_scale, (0, 255, 0), thickness)
+    cv2.putText(frame, f"Down: {down}", (x, y + 50), font, font_scale, (0, 165, 255), thickness)
     
     return frame
 
@@ -358,20 +388,18 @@ def draw_kalman_predictions(frame, kalman_tracks, roi_points=None, display_mode=
         kalman_tracks: Dictionary of track_id -> KalmanFilter objects
         roi_points: ROI points for distance filtering
         display_mode: 'clean', 'verbose', or 'minimal'
-        max_distance: Maximum distance from ROI to show tracks
+        max_distance: Maximum distance from ROI to show (in clean mode)
         
     Returns:
-        frame: Frame with predictions drawn
+        frame: Frame with Kalman predictions drawn
     """
     if display_mode == 'minimal':
         return frame
-        
+    
     for track_id, kf in kalman_tracks.items():
-        # Only show recently updated tracks
-        if hasattr(kf, 'time_since_update') and kf.time_since_update >= 3:
-            continue
-            
-        x, y = kf.get_position()
+        # Get predicted position
+        x = int(kf.x[0])
+        y = int(kf.x[1])
         
         # Distance filtering in clean mode
         if display_mode == 'clean' and roi_points:
@@ -381,37 +409,54 @@ def draw_kalman_predictions(frame, kalman_tracks, roi_points=None, display_mode=
             if dist > max_distance:
                 continue
         
-        # Draw predicted position (larger, more visible)
-        cv2.circle(frame, (x, y), 8, (255, 165, 0), 2)  # Orange circle
+        # Draw predicted position
+        cv2.circle(frame, (x, y), 6, (255, 0, 255), -1)  # Magenta for predictions
         
-        # Draw velocity vector only in verbose mode
+        # Draw uncertainty ellipse if available
+        if hasattr(kf, 'P') and kf.P is not None:
+            # Extract position covariance
+            cov = kf.P[:2, :2]
+            eigenvals, eigenvecs = np.linalg.eigh(cov)
+            angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
+            
+            # Draw ellipse
+            axes_lengths = (int(np.sqrt(eigenvals[0]) * 3), int(np.sqrt(eigenvals[1]) * 3))
+            cv2.ellipse(frame, (x, y), axes_lengths, angle, 0, 360, (255, 0, 255), 1)
+        
+        # Show ID in verbose mode
         if display_mode == 'verbose':
-            vx, vy = kf.get_velocity()
-            if abs(vx) > 0.1 or abs(vy) > 0.1:
-                end_x = int(x + vx * 10)
-                end_y = int(y + vy * 10)
-                cv2.arrowedLine(frame, (x, y), (end_x, end_y), (255, 165, 0), 2)
+            text = f"KF{track_id}"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 1
+            cv2.putText(frame, text, (x + 10, y - 10), font, font_scale, (255, 0, 255), thickness)
     
     return frame
 
 
 def draw_crossing_event(frame, animations):
     """
-    Draw crossing event animations (flash, ripple effects).
+    Draw crossing event animations (flash, ripple effects) and +1 indicators.
     
     Args:
         frame: Input frame
-        animations: List of active animations with progress
+        animations: List of active animations with 'position', 'progress', 'direction'
         
     Returns:
         frame: Frame with animations drawn
     """
     for anim in animations:
-        position = anim['position']
-        progress = anim['progress']
-        direction = anim['direction']
+        position = anim.get('position', None)
+        if position is None:
+            continue
         
-        x, y = int(position[0]), int(position[1])
+        progress = anim.get('progress', 0.0)
+        direction = anim.get('direction', 'unknown')
+        
+        if isinstance(position, np.ndarray):
+            x, y = int(position[0]), int(position[1])
+        else:
+            x, y = int(position[0]), int(position[1])
         
         # Expanding circle (ripple effect)
         radius = int(20 + progress * 40)  # 20 to 60 pixels
@@ -456,201 +501,6 @@ def draw_crossing_event(frame, animations):
     return frame
 
 
-def draw_recent_crossings_panel(frame, recent_crossings):
-    """
-    Draw panel showing recent crossing events.
-    
-    Args:
-        frame: Input frame
-        recent_crossings: List of recent crossing events
-        
-    Returns:
-        frame: Frame with panel drawn
-    """
-    if not recent_crossings:
-        return frame
-    
-    # Panel position (top-right) - MUCH LARGER
-    frame_height, frame_width = frame.shape[:2]
-    panel_width = 380  # Increased from 280
-    panel_x = frame_width - panel_width - 15
-    panel_y = 15
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.9  # Increased from 0.6
-    thickness = 2
-    line_height = 45  # Increased from 30
-    
-    # Calculate panel height
-    panel_height = 60 + len(recent_crossings) * line_height + 20  # More padding
-    
-    # Draw semi-transparent background
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (40, 40, 40), -1)
-    cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-    
-    # Draw border (thicker)
-    cv2.rectangle(frame, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (0, 255, 128), 3)
-    
-    # Draw title (larger)
-    title = "RECENT CROSSINGS"
-    cv2.putText(frame, title, (panel_x + 15, panel_y + 35),
-               cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 255, 255), 2)
-    
-    # Draw separator
-    cv2.line(frame, (panel_x + 15, panel_y + 48),
-             (panel_x + panel_width - 15, panel_y + 48),
-             (100, 100, 100), 2)
-    
-    # Draw each crossing
-    current_time = time.time()
-    for i, crossing in enumerate(recent_crossings):
-        y_pos = panel_y + 80 + i * line_height
-        
-        # Direction icon and color
-        direction = crossing.get('direction', 'unknown')
-        if direction in ['up', 'enter']:
-            icon = "▲"
-            color = (150, 220, 255)  # Brighter light blue
-        else:
-            icon = "▼"
-            color = (100, 180, 255)  # Brighter orange
-        
-        # Time ago
-        elapsed = current_time - crossing.get('timestamp', current_time)
-        time_str = f"{elapsed:.1f}s"
-        
-        # Track ID with validation
-        track_id = crossing.get('track_id', None)
-        if track_id is None or not isinstance(track_id, (int, str)):
-            track_id = "???"
-        
-        # Vehicle class name (if available)
-        class_name = crossing.get('class_name', '')
-        
-        try:
-            # Draw icon (larger)
-            cv2.putText(frame, icon, (panel_x + 20, y_pos),
-                       font, font_scale * 1.2, color, thickness + 1)
-            
-            # Draw track ID with vehicle type (larger, bolder)
-            if class_name:
-                text = f"Track {track_id} {class_name}"
-            else:
-                text = f"Track {track_id}"
-            cv2.putText(frame, text, (panel_x + 65, y_pos),
-                       font, font_scale, (255, 255, 255), 2)
-            
-            # Draw time (larger)
-            cv2.putText(frame, time_str, (panel_x + panel_width - 90, y_pos),
-                       font, font_scale * 0.9, (220, 220, 220), 2)
-        except Exception as e:
-            # Fallback to simple text if rendering fails
-            simple_text = f"Track {track_id}"
-            cv2.putText(frame, simple_text, (panel_x + 65, y_pos),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    
-    return frame
-
-
-def draw_status_panel(frame, counts, frame_number=0, total_frames=0, fps=0, direction_labels=None):
-    """
-    Draw enhanced status panel with vehicle counts.
-    
-    Args:
-        frame: Input frame
-        counts: Dictionary with count statistics
-        frame_number: Current frame number
-        total_frames: Total frames in video
-        fps: Frames per second
-        direction_labels: Tuple of (up_label, down_label) for custom direction names
-        
-    Returns:
-        frame: Frame with status panel drawn
-    """
-    if direction_labels is None:
-        direction_labels = ('Up', 'Down')
-    up_label, down_label = direction_labels
-    
-    x, y = 15, 15
-    panel_width = 280
-    panel_height = 180
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_bold = cv2.FONT_HERSHEY_DUPLEX
-    
-    # Draw semi-transparent background
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x, y),
-                  (x + panel_width, y + panel_height),
-                  (40, 40, 40), -1)
-    cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-    
-    # Draw border
-    cv2.rectangle(frame, (x, y),
-                  (x + panel_width, y + panel_height),
-                  (0, 255, 128), 2)
-    
-    # Title
-    title = "VEHICLE COUNT"
-    cv2.putText(frame, title, (x + 15, y + 30),
-               font_bold, 0.8, (255, 255, 255), 2)
-    
-    # Separator
-    cv2.line(frame, (x + 15, y + 40), (x + panel_width - 15, y + 40),
-             (100, 100, 100), 1)
-    
-    # Total count (large)
-    total = counts.get('total', 0)
-    total_text = f"Total: {total}"
-    cv2.putText(frame, total_text, (x + 20, y + 75),
-               font_bold, 1.1, (0, 255, 128), 2)
-    
-    # Up count
-    up = counts.get('up', 0)
-    cv2.putText(frame, "▲", (x + 20, y + 110),
-               font, 0.8, (100, 200, 255), 2)
-    cv2.putText(frame, f"{up_label}: {up}", (x + 50, y + 110),
-               font, 0.7, (255, 255, 255), 2)
-    
-    # Down count
-    down = counts.get('down', 0)
-    cv2.putText(frame, "▼", (x + 20, y + 140),
-               font, 0.8, (100, 165, 255), 2)
-    cv2.putText(frame, f"{down_label}: {down}", (x + 50, y + 140),
-               font, 0.7, (255, 255, 255), 2)
-    
-    # Progress bar if total_frames available
-    if total_frames > 0:
-        progress = frame_number / total_frames
-        bar_width = panel_width - 40
-        bar_height = 8
-        bar_x = x + 20
-        bar_y = y + panel_height - 25
-        
-        # Background bar
-        cv2.rectangle(frame, (bar_x, bar_y),
-                     (bar_x + bar_width, bar_y + bar_height),
-                     (80, 80, 80), -1)
-        
-        # Progress bar
-        progress_width = int(bar_width * progress)
-        cv2.rectangle(frame, (bar_x, bar_y),
-                     (bar_x + progress_width, bar_y + bar_height),
-                     (0, 255, 128), -1)
-        
-        # Frame info
-        frame_text = f"{frame_number}/{total_frames}"
-        cv2.putText(frame, frame_text, (bar_x, bar_y - 5),
-                   font, 0.5, (200, 200, 200), 1)
-    
-    return frame
-
-
 def draw_yolo_detections(frame, detections, roi_points=None, display_mode='clean',
                          max_distance=150, recent_crossing_ids=None):
     """
@@ -675,17 +525,20 @@ def draw_yolo_detections(frame, detections, roi_points=None, display_mode='clean
     
     for det in detections:
         track_id = det.get('id', -1)
-        bbox = det['bbox']
+        bbox = det.get('bbox', None)
+        if bbox is None:
+            continue
+        
         x1, y1, x2, y2 = bbox
-        center = det['position']
+        center = det.get('position', None)
         class_name = det.get('class_name', 'vehicle')
         confidence = det.get('confidence', 0.0)
         
         # Distance filtering in clean mode
-        if display_mode == 'clean' and roi_points:
+        if display_mode == 'clean' and roi_points and center is not None:
             from .vehicle_counter import VehicleCounter
             counter_temp = VehicleCounter(roi_type='line', roi_points=roi_points)
-            dist = counter_temp.get_distance_to_roi(center)
+            dist = counter_temp.get_distance_to_roi((center[0], center[1]))
             if dist > max_distance and track_id not in recent_crossing_ids:
                 continue
         
@@ -699,182 +552,21 @@ def draw_yolo_detections(frame, detections, roi_points=None, display_mode='clean
         # Draw label
         if display_mode == 'verbose' or track_id in recent_crossing_ids:
             label = f"{class_name}"
-            if track_id >= 0:
-                label = f"ID:{track_id} {class_name}"
             if display_mode == 'verbose':
-                label += f" {confidence:.2f}"
+                label = f"ID{track_id} {label} {confidence:.2f}"
+            
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 1
             
             # Get text size for background
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.6
-            thickness = 2
             (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
             
-            # Draw background
-            cv2.rectangle(frame, (x1, y1 - text_height - 10),
-                         (x1 + text_width + 10, y1), color, -1)
+            # Draw background rectangle
+            cv2.rectangle(frame, (x1, y1 - text_height - 5), 
+                         (x1 + text_width + 5, y1), (0, 0, 0), -1)
             
             # Draw text
-            cv2.putText(frame, label, (x1 + 5, y1 - 5),
-                       font, font_scale, (0, 0, 0), thickness)
-        
-        # Draw track history if available
-        if 'history' in det and len(det['history']) > 1:
-            points = np.array(det['history'], dtype=np.int32)
-            line_thickness = 2 if display_mode == 'verbose' else 1
-            for i in range(len(points) - 1):
-                cv2.line(frame, tuple(points[i]), tuple(points[i+1]), color, line_thickness)
+            cv2.putText(frame, label, (x1 + 2, y1 - 5), font, font_scale, color, thickness)
     
     return frame
-
-
-def draw_legend_panel(frame):
-    """
-    Draw legend panel explaining color meanings and symbols.
-    
-    Args:
-        frame: Input frame
-        
-    Returns:
-        frame: Frame with legend drawn
-    """
-    frame_height, frame_width = frame.shape[:2]
-    
-    # Panel settings
-    panel_width = 320
-    panel_height = 200
-    panel_x = (frame_width - panel_width) // 2  # Center horizontally
-    panel_y = 80  # Below top panels
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    
-    # Draw semi-transparent background
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (40, 40, 40), -1)
-    cv2.addWeighted(overlay, 0.9, frame, 0.1, 0, frame)
-    
-    # Draw border
-    cv2.rectangle(frame, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (100, 200, 255), 2)
-    
-    # Title
-    title = "LEGEND"
-    cv2.putText(frame, title, (panel_x + 120, panel_y + 30),
-               cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
-    
-    # Separator
-    cv2.line(frame, (panel_x + 15, panel_y + 40),
-             (panel_x + panel_width - 15, panel_y + 40),
-             (100, 100, 100), 1)
-    
-    y_offset = panel_y + 65
-    line_spacing = 35
-    
-    # Green box - Normal tracking
-    cv2.rectangle(frame, (panel_x + 20, y_offset - 12),
-                 (panel_x + 40, y_offset + 8), (0, 255, 0), 2)
-    cv2.putText(frame, "Normal Tracking", (panel_x + 50, y_offset),
-               font, font_scale, (255, 255, 255), 1)
-    
-    # Yellow box - Recently crossed
-    y_offset += line_spacing
-    cv2.rectangle(frame, (panel_x + 20, y_offset - 12),
-                 (panel_x + 40, y_offset + 8), (0, 255, 255), 2)
-    cv2.putText(frame, "Recently Crossed ROI", (panel_x + 50, y_offset),
-               font, font_scale, (255, 255, 255), 1)
-    
-    # Up arrow
-    y_offset += line_spacing
-    cv2.putText(frame, "▲", (panel_x + 25, y_offset),
-               font, font_scale * 1.2, (150, 220, 255), 2)
-    cv2.putText(frame, "Direction: Up/Enter", (panel_x + 50, y_offset),
-               font, font_scale, (255, 255, 255), 1)
-    
-    # Down arrow
-    y_offset += line_spacing
-    cv2.putText(frame, "▼", (panel_x + 25, y_offset),
-               font, font_scale * 1.2, (100, 180, 255), 2)
-    cv2.putText(frame, "Direction: Down/Exit", (panel_x + 50, y_offset),
-               font, font_scale, (255, 255, 255), 1)
-    
-    # Note
-    y_offset += line_spacing + 5
-    note = "Press 'L' to toggle legend"
-    cv2.putText(frame, note, (panel_x + 50, y_offset),
-               font, font_scale * 0.7, (180, 180, 180), 1)
-    
-    return frame
-
-
-def draw_controls_help(frame, show_help=True):
-    """
-    Draw control hints panel at bottom of frame.
-    
-    Args:
-        frame: Input frame
-        show_help: Whether to show the help panel
-        
-    Returns:
-        frame: Frame with controls drawn
-    """
-    if not show_help:
-        return frame
-    
-    frame_height, frame_width = frame.shape[:2]
-    
-    panel_height = 60
-    panel_y = frame_height - panel_height - 10
-    panel_x = 15
-    panel_width = frame_width - 30
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.55
-    
-    # Draw semi-transparent background
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (40, 40, 40), -1)
-    cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
-    
-    # Draw border
-    cv2.rectangle(frame, (panel_x, panel_y),
-                  (panel_x + panel_width, panel_y + panel_height),
-                  (100, 100, 100), 1)
-    
-    # Controls text
-    controls = [
-        ("[SPACE] Pause", panel_x + 20),
-        ("[T] Tracks", panel_x + 160),
-        ("[V] Verbose", panel_x + 280),
-        ("[M] Minimal", panel_x + 420),
-        ("[L] Legend", panel_x + 560),
-        ("[R] Reset", panel_x + 680),
-        ("[H] Help", panel_x + 800),
-        ("[Q] Quit", panel_x + 920)
-    ]
-    
-    y_pos = panel_y + 25
-    for text, x_pos in controls:
-        if x_pos < panel_x + panel_width - 100:
-            # Draw key in brackets
-            bracket_start = text.find('[')
-            bracket_end = text.find(']')
-            if bracket_start >= 0 and bracket_end > bracket_start:
-                key = text[bracket_start:bracket_end+1]
-                desc = text[bracket_end+2:]
-                
-                # Draw key
-                cv2.putText(frame, key, (x_pos, y_pos),
-                           font, font_scale, (0, 255, 128), 2)
-                
-                # Draw description
-                cv2.putText(frame, desc, (x_pos, y_pos + 22),
-                           font, font_scale * 0.8, (200, 200, 200), 1)
-    
-    return frame
-
