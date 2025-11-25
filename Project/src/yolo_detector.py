@@ -29,36 +29,15 @@ class YOLODetector:
         """
         try:
             from ultralytics import YOLO
-            import torch
-            
-            # Determine device (GPU if available, else CPU)
-            import torch
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            
-            # Initialize YOLO model (Ultralytics automatically uses GPU if available)
             self.yolo = YOLO(f'yolov8{model_size}.pt')
-            
-            # Verify device and print status
-            if self.device == 'cuda':
-                # Test if GPU is actually being used
-                try:
-                    # YOLO automatically uses GPU, but we can verify
-                    device_info = f"GPU (CUDA {torch.version.cuda})" if torch.cuda.is_available() else "CPU"
-                    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
-                    print(f"[OK] YOLOv8{model_size} loaded on {device_info} - {gpu_name}")
-                    print(f"     Confidence: {confidence_threshold}, Min box size: {min_box_size}px")
-                except:
-                    print(f"[OK] YOLOv8{model_size} loaded on GPU (CUDA) - confidence: {confidence_threshold}, min_box_size: {min_box_size}px")
-            else:
-                print(f"[OK] YOLOv8{model_size} loaded on CPU - confidence: {confidence_threshold}, min_box_size: {min_box_size}px")
-            
             self.available = True
+            print(f"✅ YOLOv8{model_size} loaded successfully (confidence: {confidence_threshold}, min_box_size: {min_box_size}px)")
         except ImportError:
-            print("[ERROR] YOLOv8 not available. Install with: pip install ultralytics")
+            print("❌ YOLOv8 not available. Install with: pip install ultralytics")
             self.available = False
             self.yolo = None
         except Exception as e:
-            print(f"[ERROR] Error loading YOLO: {e}")
+            print(f"❌ Error loading YOLO: {e}")
             self.available = False
             self.yolo = None
             
@@ -83,7 +62,7 @@ class YOLODetector:
         if not self.available:
             return []
         
-        # Run YOLO detection (device is already set via model.to(device))
+        # Run YOLO detection
         results = self.yolo(frame, verbose=False, conf=self.confidence_threshold)
         
         detections = []
@@ -122,7 +101,7 @@ class YOLODetector:
         if not self.available:
             return []
         
-        # Run YOLO tracking (device is already set via model.to(device))
+        # Run YOLO tracking
         results = self.yolo.track(frame, persist=True, verbose=False, 
                                   conf=self.confidence_threshold)
         

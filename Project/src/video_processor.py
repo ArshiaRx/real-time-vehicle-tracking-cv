@@ -4,102 +4,152 @@ Main video processing pipeline that integrates optical flow, Kalman filtering, a
 
 import cv2
 import numpy as np
-import time
 from typing import Optional, Dict
 from .optical_flow_tracker import OpticalFlowTracker
 from .kalman_filter import ObjectKalmanFilter
 from .vehicle_counter import VehicleCounter
 from .yolo_detector import YOLODetector
-from .color_detector import ColorDetector
-from .utils import (draw_tracks, draw_roi, draw_counts, draw_kalman_predictions,
-                   draw_crossing_event, draw_recent_crossings_panel, 
-                   draw_status_panel, draw_controls_help, draw_yolo_detections,
-                   draw_legend_panel)
+from .utils import draw_tracks, draw_roi, draw_counts, draw_kalman_predictions, draw_crossing_event
 
 
 class VideoProcessor:
     """Main video processing pipeline."""
     
-    def __init__(self, use_kalman=True, roi_type='line', roi_points=None, use_yolo=False, 
-                 direction_labels=None, yolo_confidence=0.4, min_box_size=20, yolo_model_size='n'):
+    def __init__(self, use_kalman=True, roi_type='line', roi_points=None, roi_lines=None,
+                 use_yolo=False, yolo_confidence=0.4, min_box_size=20):
         """
         Initialize video processor.
         
         Args:
             use_kalman: Whether to use Kalman filtering for smooth tracking
             roi_type: Type of ROI ('line' or 'polygon')
-            roi_points: ROI points
+            roi_points: ROI points (legacy support)
+            roi_lines: List of ROI lines for multiple lines support
             use_yolo: Whether to use YOLOv8 for detection (more accurate)
-            direction_labels: Tuple of (up_label, down_label) for custom direction names
             yolo_confidence: YOLO confidence threshold (0.0-1.0)
             min_box_size: Minimum bounding box size in pixels
-            yolo_model_size: YOLO model size ('n', 's', 'm', 'l', 'x') - larger = more accurate but slower
         """
         self.use_yolo = use_yolo
-        self.direction_labels = direction_labels if direction_labels else ('Up', 'Down')
-        self.min_box_size = min_box_size
         
+        # Initialize YOLO detector if requested
         if use_yolo:
-            self.yolo_detector = YOLODetector(model_size=yolo_model_size, confidence_threshold=yolo_confidence,
-                                             min_box_size=min_box_size)
+            self.yolo_detector = YOLODetector(
+                model_size='n', 
+                confidence_threshold=yolo_confidence,
+                min_box_size=min_box_size
+            )
             if not self.yolo_detector.available:
                 print("⚠️  YOLOv8 not available, falling back to optical flow")
                 self.use_yolo = False
-            else:
-                # Initialize color detector for YOLO mode
-                self.color_detector = ColorDetector()
+                self.yolo_detector = None
         else:
-            self.color_detector = None
+            self.yolo_detector = None
         
+        # Initialize optical flow tracker (used when YOLO is not enabled or as fallback)
         self.optical_flow_tracker = OpticalFlowTracker()
-        self.use_kalman = use_kalman and not use_yolo  # Don't need Kalman with YOLO tracking
+        self.use_kalman = use_kalman and not use_yolo  # Disable Kalman when using YOLO
         self.kalman_tracks = {}  # track_id -> KalmanFilter
-        self.vehicle_counter = VehicleCounter(roi_type=roi_type, roi_points=roi_points)
+        self.vehicle_counter = VehicleCounter(roi_type=roi_type, roi_points=roi_points, roi_lines=roi_lines)
         self.frame_count = 0
+        self.last_yolo_tracks = []  # Cache last YOLO tracks for skipped frames
+        self.process_yolo_every_n = 2  # Process YOLO every 2nd frame for 2x speed
         
-        # Display settings
-        self.display_mode = 'clean'  # 'clean', 'verbose', or 'minimal'
-        self.show_tracks = True
-        self.show_help = True
-        self.show_legend = False  # Toggle legend panel
-        self.last_count = 0  # Track previous count for ROI highlighting
-        self.roi_highlight_until = 0  # Timestamp until which to highlight ROI
-        
-    def set_roi(self, roi_type, roi_points):
+    def set_roi(self, roi_type, roi_points=None, roi_lines=None):
         """Set or update the ROI."""
-        self.vehicle_counter.set_roi(roi_type, roi_points)
+        self.vehicle_counter.set_roi(roi_type, roi_points, roi_lines)
     
-    def process_frame(self, frame, total_frames=0):
+    def process_frame(self, frame):
         """
         Process a single frame.
         
         Args:
             frame: Input frame (BGR image)
-            total_frames: Total number of frames (for progress bar)
             
         Returns:
             dict: Processing results with annotated frame and statistics
         """
         self.frame_count += 1
-        current_time = time.time()
         
-        # Choose tracking method
-        if self.use_yolo:
-            # Use YOLO tracking (more accurate)
-            tracks = self.yolo_detector.track(frame)
+        # Use YOLO detection if enabled
+        if self.use_yolo and self.yolo_detector and self.yolo_detector.available:
+            # Process YOLO every 2nd frame for 2x speed (tracking maintains state internally)
+            if self.frame_count % self.process_yolo_every_n == 0:
+                # Full YOLO detection and tracking
+                yolo_tracks = self.yolo_detector.track(frame)
+                self.last_yolo_tracks = yolo_tracks
+            else:
+                # Reuse last tracks (YOLO tracking maintains state, we just reuse positions)
+                # This is safe because YOLO tracking persists internally
+                yolo_tracks = self.last_yolo_tracks if self.last_yolo_tracks else []
             
-            # Add color detection to tracks
-            if self.color_detector:
-                for track in tracks:
-                    bbox = track.get('bbox')
-                    if bbox:
-                        color_info = self.color_detector.detect_vehicle_color(frame, bbox)
-                        track['color'] = color_info
+            # Update vehicle counter with YOLO tracks (always update for accurate counting)
+            self.vehicle_counter.update(yolo_tracks)
             
-            self.vehicle_counter.update(tracks)
-            of_tracks = tracks  # For visualization
+            # Create annotated frame
+            annotated_frame = frame.copy()
+            
+            # Draw ROI
+            if self.vehicle_counter.roi_type == 'line' and self.vehicle_counter.roi_lines:
+                annotated_frame = draw_roi(
+                    annotated_frame, 
+                    roi_points=self.vehicle_counter.roi_points,
+                    roi_lines=self.vehicle_counter.roi_lines,
+                    roi_type=self.vehicle_counter.roi_type
+                )
+            elif self.vehicle_counter.roi_points:
+                annotated_frame = draw_roi(
+                    annotated_frame, 
+                    roi_points=self.vehicle_counter.roi_points,
+                    roi_type=self.vehicle_counter.roi_type
+                )
+            
+            # Draw YOLO tracks (with display_mode if set)
+            display_mode = getattr(self, 'display_mode', 'clean')
+            annotated_frame = draw_tracks(
+                annotated_frame, 
+                yolo_tracks,
+                display_mode=display_mode,
+                roi_points=self.vehicle_counter.roi_points
+            )
+            
+            # Draw +1 indicators on vehicles when they cross ROI
+            animations = self.vehicle_counter.get_active_animations()
+            if animations:
+                # Enhance animations with bounding box info for better positioning above vehicles
+                enhanced_animations = []
+                for anim in animations:
+                    track_id = anim.get('track_id', None)
+                    position = anim['position']
+                    
+                    # Find matching YOLO track to get bbox top position
+                    for track in yolo_tracks:
+                        if track.get('id') == track_id and 'bbox' in track:
+                            bbox = track['bbox']
+                            x1, y1, x2, y2 = bbox
+                            # Use top-center of bounding box for better visibility above vehicle
+                            enhanced_anim = anim.copy()
+                            enhanced_anim['position'] = ((x1 + x2) // 2, y1)
+                            enhanced_animations.append(enhanced_anim)
+                            break
+                    else:
+                        # No matching track found, use center position
+                        enhanced_animations.append(anim)
+                
+                annotated_frame = draw_crossing_event(annotated_frame, enhanced_animations)
+            
+            # Draw counts
+            counts = self.vehicle_counter.get_counts()
+            annotated_frame = draw_counts(annotated_frame, counts)
+            
+            return {
+                'frame': annotated_frame,
+                'counts': counts,
+                'tracks': yolo_tracks,
+                'frame_number': self.frame_count
+            }
         else:
-            # Use optical flow tracking (original method)
+            # Fallback to optical flow tracking
+            # Get optical flow tracks
             of_tracks = self.optical_flow_tracker.update(frame)
             
             # Update Kalman filters
@@ -111,101 +161,66 @@ class VideoProcessor:
             else:
                 # Use raw optical flow tracks for counting
                 self.vehicle_counter.update(of_tracks)
-        
-        # Get counts and check if ROI should be highlighted
-        counts = self.vehicle_counter.get_counts()
-        if counts['total'] > self.last_count:
-            # New crossing detected, highlight ROI for 0.5 seconds
-            self.roi_highlight_until = current_time + 0.5
-            self.last_count = counts['total']
-        
-        # Create annotated frame
-        annotated_frame = frame.copy()
-        
-        # Draw ROI with highlight if needed
-        highlight_roi = current_time < self.roi_highlight_until
-        if self.vehicle_counter.roi_points:
-            annotated_frame = draw_roi(
-                annotated_frame, 
-                self.vehicle_counter.roi_points,
-                self.vehicle_counter.roi_type,
-                highlight=highlight_roi
-            )
-        
-        # Get recent crossing IDs
-        recent_crossings = self.vehicle_counter.get_recent_crossings()
-        recent_crossing_ids = {c['track_id'] for c in recent_crossings}
-        
-        # Draw tracks (with filtering and display modes)
-        if self.show_tracks and self.display_mode != 'minimal':
-            if self.use_yolo:
-                # Draw YOLO detections and tracks
-                annotated_frame = draw_yolo_detections(
-                    annotated_frame,
-                    of_tracks,  # These are YOLO tracks
+            
+            # Create annotated frame
+            annotated_frame = frame.copy()
+            
+            # Draw ROI
+            if self.vehicle_counter.roi_type == 'line' and self.vehicle_counter.roi_lines:
+                annotated_frame = draw_roi(
+                    annotated_frame, 
                     roi_points=self.vehicle_counter.roi_points,
-                    display_mode=self.display_mode,
-                    recent_crossing_ids=recent_crossing_ids
+                    roi_lines=self.vehicle_counter.roi_lines,
+                    roi_type=self.vehicle_counter.roi_type
                 )
-            elif self.use_kalman:
+            elif self.vehicle_counter.roi_points:
+                annotated_frame = draw_roi(
+                    annotated_frame, 
+                    roi_points=self.vehicle_counter.roi_points,
+                    roi_type=self.vehicle_counter.roi_type
+                )
+            
+            # Draw tracks (with display_mode if set)
+            display_mode = getattr(self, 'display_mode', 'clean')
+            if self.use_kalman:
                 # Draw Kalman predictions
                 annotated_frame = draw_kalman_predictions(
                     annotated_frame, 
                     self.kalman_tracks,
-                    roi_points=self.vehicle_counter.roi_points,
-                    display_mode=self.display_mode
+                    display_mode=display_mode,
+                    roi_points=self.vehicle_counter.roi_points
                 )
-                # Also draw optical flow tracks
+                # Also draw optical flow tracks in different color
                 annotated_frame = draw_tracks(
                     annotated_frame, 
                     of_tracks,
-                    roi_points=self.vehicle_counter.roi_points,
-                    display_mode=self.display_mode,
-                    recent_crossing_ids=recent_crossing_ids
+                    display_mode=display_mode,
+                    roi_points=self.vehicle_counter.roi_points
                 )
             else:
                 # Draw optical flow tracks only
                 annotated_frame = draw_tracks(
                     annotated_frame, 
                     of_tracks,
-                    roi_points=self.vehicle_counter.roi_points,
-                    display_mode=self.display_mode,
-                    recent_crossing_ids=recent_crossing_ids
+                    display_mode=display_mode,
+                    roi_points=self.vehicle_counter.roi_points
                 )
-        
-        # Draw crossing animations
-        animations = self.vehicle_counter.get_active_animations()
-        if animations:
-            annotated_frame = draw_crossing_event(annotated_frame, animations)
-        
-        # Draw enhanced status panel instead of simple counts
-        annotated_frame = draw_status_panel(
-            annotated_frame, 
-            counts,
-            frame_number=self.frame_count,
-            total_frames=total_frames,
-            direction_labels=self.direction_labels
-        )
-        
-        # Draw recent crossings panel
-        if recent_crossings and self.display_mode != 'minimal':
-            annotated_frame = draw_recent_crossings_panel(annotated_frame, recent_crossings)
-        
-        # Draw legend panel
-        if self.show_legend:
-            annotated_frame = draw_legend_panel(annotated_frame)
-        
-        # Draw controls help
-        if self.show_help:
-            annotated_frame = draw_controls_help(annotated_frame, show_help=True)
-        
-        return {
-            'frame': annotated_frame,
-            'counts': counts,
-            'tracks': of_tracks,
-            'frame_number': self.frame_count,
-            'recent_crossings': recent_crossings
-        }
+            
+            # Draw +1 indicators on vehicles when they cross ROI
+            animations = self.vehicle_counter.get_active_animations()
+            if animations:
+                annotated_frame = draw_crossing_event(annotated_frame, animations)
+            
+            # Draw counts
+            counts = self.vehicle_counter.get_counts()
+            annotated_frame = draw_counts(annotated_frame, counts)
+            
+            return {
+                'frame': annotated_frame,
+                'counts': counts,
+                'tracks': of_tracks,
+                'frame_number': self.frame_count
+            }
     
     def _update_kalman_filters(self, of_tracks):
         """Update Kalman filters with optical flow measurements."""
@@ -255,10 +270,9 @@ class VideoProcessor:
     def reset(self):
         """Reset all tracking and counting."""
         self.optical_flow_tracker.reset()
-        self.kalman_tracks = {}
-        if self.use_yolo:
+        if self.yolo_detector and self.yolo_detector.available:
             self.yolo_detector.reset()
+        self.kalman_tracks = {}
         self.vehicle_counter.reset_counts()
         self.frame_count = 0
-        self.last_count = 0
 

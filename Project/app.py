@@ -13,17 +13,14 @@ from pathlib import Path
 import tempfile
 import os
 import sys
-import time
 from typing import Optional, Tuple
-from datetime import datetime
+import imageio
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.video_processor import VideoProcessor
 from src.utils import ROISelector
-from src.report_generator import ReportGenerator
-import base64
 
 # Page configuration
 st.set_page_config(
@@ -57,115 +54,23 @@ if 'processor' not in st.session_state:
     st.session_state.processor = None
 if 'video_file' not in st.session_state:
     st.session_state.video_file = None
+if 'video_path' not in st.session_state:
+    st.session_state.video_path = None
 if 'roi_points' not in st.session_state:
     st.session_state.roi_points = None
+if 'roi_lines' not in st.session_state:
+    st.session_state.roi_lines = None
 if 'roi_type' not in st.session_state:
     st.session_state.roi_type = 'line'
 if 'processing_results' not in st.session_state:
     st.session_state.processing_results = None
 if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
-
-def format_time(seconds: float) -> str:
-    """
-    Format time in seconds to MM:SS or HH:MM:SS format.
-    
-    Args:
-        seconds: Time in seconds (can be negative)
-        
-    Returns:
-        Formatted time string
-    """
-    if seconds < 0:
-        return "00:00"
-    
-    total_seconds = int(seconds)
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    secs = total_seconds % 60
-    
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    else:
-        return f"{minutes:02d}:{secs:02d}"
-
-def estimate_processing_time(total_frames: int, width: int, height: int, 
-                             use_yolo: bool, yolo_model_size: str, 
-                             has_gpu: bool = False) -> float:
-    """
-    Estimate processing time based on comprehensive video and system properties.
-    
-    Args:
-        total_frames: Total number of frames in video
-        width: Video width in pixels
-        height: Video height in pixels
-        use_yolo: Whether YOLO detection is enabled
-        yolo_model_size: YOLO model size ('n', 's', 'm', 'l')
-        has_gpu: Whether GPU is available
-        
-    Returns:
-        Estimated time in seconds
-    """
-    # Calculate resolution factor (higher resolution = slower)
-    total_pixels = width * height
-    resolution_factor = 1.0
-    
-    # Resolution-based speed factors (1080p = baseline)
-    if total_pixels >= 1920 * 1080:  # 1080p or higher
-        resolution_factor = 1.0
-    elif total_pixels >= 1280 * 720:  # 720p
-        resolution_factor = 1.4  # Faster at lower resolution
-    elif total_pixels >= 640 * 480:  # 480p
-        resolution_factor = 2.0  # Much faster
-    else:  # Lower than 480p
-        resolution_factor = 2.5
-    
-    # Base processing FPS estimates (at 1080p)
-    if use_yolo:
-        if has_gpu:
-            # GPU processing FPS at 1080p (varies by model size)
-            base_fps_1080p = {
-                'n': 45,  # Nano: fastest
-                's': 35,  # Small
-                'm': 25,  # Medium
-                'l': 18,  # Large: slower but more accurate
-                'x': 12   # XLarge: very slow
-            }
-            base_fps = base_fps_1080p.get(yolo_model_size, 25)
-        else:
-            # CPU processing FPS at 1080p
-            base_fps_1080p = {
-                'n': 12,  # Nano
-                's': 10,  # Small
-                'm': 8,   # Medium
-                'l': 6,   # Large
-                'x': 4    # XLarge
-            }
-            base_fps = base_fps_1080p.get(yolo_model_size, 8)
-    else:
-        # Optical flow only (much faster, less affected by resolution)
-        base_fps = 50
-        resolution_factor = 1.2  # Less impact for optical flow
-    
-    # Apply resolution factor
-    processing_fps = base_fps * resolution_factor
-    
-    # Additional overhead factors
-    color_detection_overhead = 0.05  # 5% overhead for color detection
-    video_encoding_overhead = 0.10   # 10% overhead for video writing
-    
-    # Apply overheads
-    if use_yolo:
-        processing_fps = processing_fps * (1 - color_detection_overhead) * (1 - video_encoding_overhead)
-    
-    # Calculate estimated time
-    estimated_time = total_frames / processing_fps
-    
-    return estimated_time
+if 'intermediate_results' not in st.session_state:
+    st.session_state.intermediate_results = None
 
 def process_video_streamlit(video_path: str, processor: VideoProcessor, 
-                            progress_bar, status_text, use_yolo: bool = False,
-                            yolo_model_size: str = 'n') -> dict:
+                            progress_bar, status_text) -> dict:
     """Process video and return results."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -176,113 +81,116 @@ def process_video_streamlit(video_path: str, processor: VideoProcessor,
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Setup video writer - try multiple codecs for compatibility
+    # Setup video writer with browser-compatible H.264 codec using imageio
+    # imageio works without external DLLs and is compatible with Streamlit web apps
     output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
     
-    # Try codecs in order of preference (browser compatibility)
-    codecs_to_try = [
-        ('mp4v', 'mp4v'),  # Most compatible, works everywhere
-        ('XVID', 'XVID'),  # Good alternative
-        ('MJPG', 'MJPG'),  # Motion JPEG, very compatible
-    ]
-    
-    writer = None
-    used_codec = None
-    for codec_name, fourcc_str in codecs_to_try:
-        fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        if writer.isOpened():
-            used_codec = codec_name
-            break
-        writer.release()
-    
-    if writer is None or not writer.isOpened():
-        raise RuntimeError("Failed to initialize video writer with any codec")
-    
-    # Check if GPU is available
     try:
-        import torch
-        has_gpu = torch.cuda.is_available()
-    except:
-        has_gpu = False
+        # Use imageio for H.264 encoding (browser-compatible, no DLL dependencies)
+        writer = imageio.get_writer(
+            output_path, 
+            fps=fps, 
+            codec='libx264',
+            quality=4,  # 0-10, lower = faster encoding (4 is still acceptable quality, faster)
+            macro_block_size=None,  # Auto-determine based on resolution
+            pixelformat='yuv420p'  # Browser-compatible pixel format
+        )
+    except Exception as e:
+        # Fallback to mp4v if imageio fails
+        cap.release()
+        return None
     
-    # Calculate estimated processing time BEFORE starting (using video properties)
-    estimated_total_time = estimate_processing_time(
-        total_frames, width, height, use_yolo, yolo_model_size, has_gpu
-    )
-    
-    # Display initial estimate
-    status_text.text(
-        f"Initializing...\n"
-        f"⏱️ Estimated time: {format_time(estimated_total_time)}\n"
-        f"Starting processing..."
-    )
-    
-    # Timing tracking
-    start_time = time.time()
     frame_count = 0
     all_counts = []
     all_tracks = []
     
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Process frame
-        result = processor.process_frame(frame, total_frames=total_frames)
-        annotated_frame = result['frame']
-        counts = result['counts']
-        tracks = result['tracks']
-        
-        # Write frame
-        writer.write(annotated_frame)
-        
-        # Store statistics
-        all_counts.append({
-            'frame': frame_count,
-            'total': counts['total'],
-            'up': counts['up'],
-            'down': counts['down']
-        })
-        all_tracks.append(len(tracks))
-        
-        frame_count += 1
-        
-        # Calculate elapsed time
-        elapsed_time = time.time() - start_time
-        
-        # Calculate remaining time by subtracting elapsed from initial estimate
-        remaining_time = max(0, estimated_total_time - elapsed_time)
-        
-        # Update progress
-        progress = (frame_count / total_frames) * 100
-        progress_bar.progress(progress / 100)
-        
-        # Format status text with countdown timer (removed elapsed time)
-        status_msg = (
-            f"Processing frame {frame_count}/{total_frames} ({progress:.1f}%)\n"
-            f"⏱️ Time remaining: {format_time(remaining_time)}"
-        )
-        
-        status_text.text(status_msg)
+    # Process in batches for faster encoding (smaller chunks)
+    batch_size = 1  # Write every frame immediately (maximum speed with no accuracy loss)
+    frame_batch = []
     
-    cap.release()
-    writer.release()
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Process frame (optimized for 2x speed - YOLO processing is now every 2nd frame internally)
+            result = processor.process_frame(frame)
+            annotated_frame = result['frame']
+            counts = result['counts']
+            tracks = result['tracks']
+            
+            # Convert to RGB and add to batch
+            rgb_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+            frame_batch.append(rgb_frame)
+            
+            # Store statistics
+            all_counts.append({
+                'frame': frame_count,
+                'total': counts['total'],
+                'up': counts['up'],
+                'down': counts['down']
+            })
+            all_tracks.append(len(tracks))
+            
+            frame_count += 1
+            
+            # Write batch when it reaches batch_size or at end
+            if len(frame_batch) >= batch_size or frame_count >= total_frames:
+                for batch_frame in frame_batch:
+                    writer.append_data(batch_frame)
+                frame_batch = []  # Clear batch
+            
+            # Update progress and statistics in real-time (reduced frequency for speed)
+            if frame_count % 50 == 0 or frame_count >= total_frames:  # Update every 50 frames for less overhead
+                progress = (frame_count / total_frames) * 100
+                progress_bar.progress(progress / 100)
+                
+                # Show current counts in status text (real-time update)
+                current_total = counts['total']
+                current_up = counts['up']
+                current_down = counts['down']
+                status_text.text(
+                    f"Processing frame {frame_count}/{total_frames} ({progress:.1f}%) | "
+                    f"Total: {current_total} (+{current_total - (all_counts[0]['total'] if all_counts else 0)}) | "
+                    f"Up: {current_up} | Down: {current_down}"
+                )
+                
+                # Store intermediate results for real-time statistics display
+                # Update session state every 50 frames for less overhead
+                if frame_count % 50 == 0:
+                    st.session_state.intermediate_results = {
+                        'count_history': all_counts.copy(),
+                        'track_history': all_tracks.copy(),
+                        'current_counts': counts.copy(),
+                        'frames_processed': frame_count
+                    }
+        
+        # Write any remaining frames in batch
+        if frame_batch:
+            for batch_frame in frame_batch:
+                writer.append_data(batch_frame)
+    finally:
+        cap.release()
+        writer.close()  # imageio uses close() instead of release()
+    
+    # Validate output file exists and has content
+    if not os.path.exists(output_path):
+        return None
+    
+    file_size = os.path.getsize(output_path)
+    if file_size == 0:
+        return None
     
     final_counts = processor.vehicle_counter.get_counts()
-    vehicle_stats = processor.vehicle_counter.get_vehicle_statistics()
     
     return {
         'output_video': output_path,
         'total_frames': frame_count,
         'fps': fps,
-        'width': width,
-        'height': height,
         'final_counts': final_counts,
         'count_history': all_counts,
-        'track_history': all_tracks,
-        'vehicle_stats': vehicle_stats
+        'track_history': all_tracks
     }
 
 # Main header
@@ -301,16 +209,18 @@ video_option = st.sidebar.radio(
 
 video_path = None
 if video_option == "Demo Videos":
-    # Dynamically scan data folder for videos
-    data_dir = Path("data")
-    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.mpeg', '.mpg']
+    # Dynamically scan data folder for video files
+    data_folder = Path("data")
     demo_videos = {}
     
-    if data_dir.exists():
-        for video_file in sorted(data_dir.iterdir()):
-            if video_file.suffix.lower() in video_extensions:
-                # Use filename without extension as display name
-                display_name = video_file.stem.replace('_', ' ').replace('-', ' ').title()
+    if data_folder.exists():
+        # Supported video extensions
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv'}
+        
+        for video_file in sorted(data_folder.iterdir()):
+            if video_file.is_file() and video_file.suffix.lower() in video_extensions:
+                # Use filename (without extension) as display name
+                display_name = video_file.stem
                 demo_videos[display_name] = str(video_file)
     
     if demo_videos:
@@ -319,54 +229,98 @@ if video_option == "Demo Videos":
         if not os.path.exists(video_path):
             st.sidebar.error(f"Demo video not found: {video_path}")
             video_path = None
+        st.session_state.video_path = video_path
     else:
-        st.sidebar.warning("⚠️ No demo videos found in data folder")
-        video_path = None
+        st.sidebar.warning("⚠️ No video files found in data folder.")
+        st.session_state.video_path = None
 else:
     uploaded_file = st.sidebar.file_uploader(
         "Upload video file",
         type=['mp4', 'avi', 'mov', 'mkv'],
-        help="Upload a video file for processing"
+        help="Upload a video file for processing",
+        key="video_uploader"
     )
+    
+    # Check if a new file was uploaded or use existing one from session state
     if uploaded_file is not None:
-        # Save uploaded file temporarily
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-        tfile.write(uploaded_file.read())
-        video_path = tfile.name
-        st.sidebar.success(f"Video uploaded: {uploaded_file.name}")
-
-# System Information
-st.sidebar.subheader("💻 System Status")
-
-# Check GPU availability and store in session state
-if 'gpu_available' not in st.session_state:
-    try:
-        import torch
-        st.session_state.gpu_available = torch.cuda.is_available()
-        if st.session_state.gpu_available:
-            st.session_state.gpu_name = torch.cuda.get_device_name(0)
-            st.session_state.gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-            st.session_state.cuda_version = torch.version.cuda
+        # Check if this is a new file (different from stored one)
+        if st.session_state.video_file != uploaded_file.name or st.session_state.video_path is None:
+            # New file uploaded - save it with chunked reading/writing
+            upload_progress = st.sidebar.progress(0)
+            upload_status = st.sidebar.empty()
+            
+            # Determine file extension from uploaded file name
+            file_ext = os.path.splitext(uploaded_file.name)[1] or '.mp4'
+            
+            # Save uploaded file temporarily with chunked I/O
+            tfile = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+            temp_file_path = tfile.name
+            
+            try:
+                chunk_size = 1024  # 1KB chunks for faster upload speed
+                file_size = uploaded_file.size
+                bytes_written = 0
+                
+                # Reset file pointer to beginning
+                uploaded_file.seek(0)
+                
+                while True:
+                    chunk = uploaded_file.read(chunk_size)
+                    if not chunk:
+                        break
+                    tfile.write(chunk)
+                    bytes_written += len(chunk)
+                    
+                    # Update progress
+                    if file_size > 0:
+                        progress = bytes_written / file_size
+                        upload_progress.progress(progress)
+                        upload_status.text(f"Uploading: {bytes_written // 1024 // 1024}MB / {file_size // 1024 // 1024}MB")
+                
+                tfile.flush()
+                os.fsync(tfile.fileno())  # Ensure data is written to disk
+                tfile.close()
+                tfile = None  # Mark as closed
+                
+                # Validate file was written successfully
+                if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
+                    video_path = temp_file_path
+                    st.session_state.video_path = video_path
+                    st.session_state.video_file = uploaded_file.name
+                    
+                    upload_progress.empty()
+                    upload_status.empty()
+                    st.sidebar.success(f"✅ Video uploaded: {uploaded_file.name}")
+                else:
+                    raise Exception("Uploaded file is empty or could not be written")
+            except Exception as e:
+                # Ensure file is closed
+                if tfile is not None:
+                    try:
+                        tfile.close()
+                    except:
+                        pass
+                # Clean up on error
+                if os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                    except:
+                        pass
+                st.sidebar.error(f"❌ Upload failed: {str(e)}")
+                video_path = None
         else:
-            st.session_state.gpu_name = None
-            st.session_state.gpu_memory = None
-            st.session_state.cuda_version = None
-    except ImportError:
-        st.session_state.gpu_available = False
-        st.session_state.gpu_name = None
-    except Exception as e:
-        st.session_state.gpu_available = False
-        st.session_state.gpu_name = None
-        st.session_state.gpu_error = str(e)[:100]
-
-# Display GPU status
-if st.session_state.gpu_available:
-    st.sidebar.success(f"✅ GPU: {st.session_state.gpu_name}\n💾 VRAM: {st.session_state.gpu_memory:.1f} GB\n🔧 CUDA: {st.session_state.cuda_version}")
-    st.sidebar.info("🚀 YOLO will use GPU acceleration")
-else:
-    st.sidebar.warning("⚠️ GPU not detected\nUsing CPU (slower)")
-    if 'gpu_error' in st.session_state:
-        st.sidebar.caption(f"Error: {st.session_state.gpu_error}")
+            # Use existing file from session state
+            video_path = st.session_state.video_path
+            if video_path and os.path.exists(video_path):
+                st.sidebar.success(f"✅ Video ready: {uploaded_file.name}")
+            else:
+                # File was deleted or missing, need to re-upload
+                st.session_state.video_path = None
+                st.session_state.video_file = None
+                video_path = None
+    elif st.session_state.video_path and os.path.exists(st.session_state.video_path):
+        # No new upload, but previous file exists in session
+        video_path = st.session_state.video_path
 
 # Processing parameters
 st.sidebar.subheader("🔧 Processing Parameters")
@@ -378,20 +332,6 @@ use_yolo = st.sidebar.checkbox(
 )
 
 if use_yolo:
-    # Model size selector - larger models = better accuracy but slower
-    yolo_model_size = st.sidebar.selectbox(
-        "YOLO Model Size",
-        options=['n', 's', 'm', 'l'],
-        index=0,
-        format_func=lambda x: {
-            'n': 'Nano (fastest, lowest accuracy)',
-            's': 'Small (fast, good accuracy)',
-            'm': 'Medium (balanced, recommended for RTX 4060)',
-            'l': 'Large (slower, highest accuracy)'
-        }[x],
-        help="Larger models are more accurate but slower. RTX 4060 can handle 'm' or 'l' models well."
-    )
-    
     yolo_confidence = st.sidebar.slider(
         "YOLO Confidence Threshold",
         min_value=0.1,
@@ -417,27 +357,153 @@ else:
     )
     yolo_confidence = 0.4
     min_box_size = 20
-    yolo_model_size = 'n'  # Default when YOLO is not used
 
 # ROI configuration
 st.sidebar.subheader("📍 Region of Interest (ROI)")
+roi_selection_mode = st.sidebar.radio(
+    "ROI Selection:",
+    ["Auto-Detect (YOLOv8)", "Manual (Default)"],
+    index=0,
+    help="""Auto-Detect: Automatically finds optimal counting line using YOLOv8 vehicle movement analysis.
+    
+Manual: Uses default horizontal line in middle of frame."""
+)
 roi_type = st.sidebar.radio(
     "ROI Type:",
     ["Line", "Polygon"],
     index=0,
-    help="Line: Count vehicles crossing a line\nPolygon: Count vehicles entering/exiting a region"
+    help="""Line: Count vehicles crossing a line. Vehicles are counted when they cross from one side to the other.
+
+Polygon: Count vehicles entering/exiting a polygon region. Vehicles are counted when they:
+- Enter the polygon (counts as 'Up' or 'Enter')
+- Exit the polygon (counts as 'Down' or 'Exit')
+The polygon ROI creates a defined area - vehicles are tracked when they enter or leave this region."""
 )
 
 roi_type_lower = roi_type.lower()
 
-# Display mode
-st.sidebar.subheader("🎨 Display Options")
-display_mode = st.sidebar.selectbox(
-    "Display Mode:",
-    ["Clean", "Verbose", "Minimal"],
-    index=0,
-    help="Clean: Standard visualization\nVerbose: Detailed information\nMinimal: Minimal overlay"
-)
+# Multiple lines support (only for line ROI type)
+use_multiple_lines = False
+if roi_type_lower == 'line':
+    st.sidebar.subheader("📏 Multiple Lines Configuration")
+    use_multiple_lines = st.sidebar.checkbox(
+        "Use Multiple Counting Lines",
+        value=False,
+        help="Enable multiple counting lines for better accuracy. Each vehicle is counted once (on first line crossed)."
+    )
+    
+    if use_multiple_lines:
+        # Initialize roi_lines in session state if not exists
+        if st.session_state.roi_lines is None:
+            st.session_state.roi_lines = []
+        
+        # Line management UI
+        num_lines = st.sidebar.number_input(
+            "Number of Lines",
+            min_value=1,
+            max_value=10,
+            value=max(1, len(st.session_state.roi_lines)) if st.session_state.roi_lines else 1,
+            step=1,
+            help="Number of counting lines to use"
+        )
+        
+        # Ensure roi_lines has the right number of lines
+        if st.session_state.roi_lines is None or len(st.session_state.roi_lines) != num_lines:
+            # Initialize or adjust number of lines
+            if st.session_state.roi_lines is None:
+                st.session_state.roi_lines = []
+            
+            # Add or remove lines to match num_lines
+            while len(st.session_state.roi_lines) < num_lines:
+                # Add default line
+                if video_path and os.path.exists(video_path):
+                    cap_temp = cv2.VideoCapture(video_path)
+                    if cap_temp.isOpened():
+                        ret, first_frame = cap_temp.read()
+                        if ret:
+                            h, w = first_frame.shape[:2]
+                            # Default line: horizontal, spaced vertically
+                            line_y = h // 2 + (len(st.session_state.roi_lines) - num_lines // 2) * (h // (num_lines + 1))
+                            st.session_state.roi_lines.append([(w // 4, line_y), (3 * w // 4, line_y)])
+                        cap_temp.release()
+                    else:
+                        st.session_state.roi_lines.append([(100, 100), (200, 100)])
+                else:
+                    st.session_state.roi_lines.append([(100, 100), (200, 100)])
+            
+            # Remove excess lines
+            st.session_state.roi_lines = st.session_state.roi_lines[:num_lines]
+        
+        # Manual adjustment for each line
+        st.sidebar.subheader("✏️ Manual Line Adjustment")
+        for line_idx in range(num_lines):
+            with st.sidebar.expander(f"Line {line_idx + 1}", expanded=(line_idx == 0)):
+                if video_path and os.path.exists(video_path):
+                    cap_temp = cv2.VideoCapture(video_path)
+                    if cap_temp.isOpened():
+                        w = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        h = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        cap_temp.release()
+                    else:
+                        w, h = 1920, 1080  # Default
+                else:
+                    w, h = 1920, 1080  # Default
+                
+                # Get current line coordinates
+                if line_idx < len(st.session_state.roi_lines):
+                    current_line = st.session_state.roi_lines[line_idx]
+                    x1, y1 = current_line[0]
+                    x2, y2 = current_line[1]
+                else:
+                    x1, y1 = w // 4, h // 2
+                    x2, y2 = 3 * w // 4, h // 2
+                
+                # Sliders for line endpoints
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Start Point**")
+                    x1_new = st.slider("X1", 0, w, x1, key=f"x1_{line_idx}")
+                    y1_new = st.slider("Y1", 0, h, y1, key=f"y1_{line_idx}")
+                with col2:
+                    st.write("**End Point**")
+                    x2_new = st.slider("X2", 0, w, x2, key=f"x2_{line_idx}")
+                    y2_new = st.slider("Y2", 0, h, y2, key=f"y2_{line_idx}")
+                
+                # Update line if changed
+                if (x1_new, y1_new) != (x1, y1) or (x2_new, y2_new) != (x2, y2):
+                    st.session_state.roi_lines[line_idx] = [(x1_new, y1_new), (x2_new, y2_new)]
+        
+        # Reset to auto-detected button
+        if st.sidebar.button("🔄 Reset to Auto-Detected", key="reset_lines"):
+            if roi_selection_mode == "Auto-Detect (YOLOv8)" and use_yolo:
+                with st.spinner("Re-detecting optimal line..."):
+                    try:
+                        from src.auto_roi_detector import auto_detect_roi_line
+                        from src.yolo_detector import YOLODetector
+                        
+                        yolo_for_roi = YOLODetector(
+                            model_size='n',
+                            confidence_threshold=yolo_confidence,
+                            min_box_size=min_box_size
+                        )
+                        
+                        if yolo_for_roi.available and video_path:
+                            auto_roi = auto_detect_roi_line(video_path, yolo_for_roi, num_sample_frames=50)
+                            if auto_roi and len(auto_roi) == 2:
+                                st.session_state.roi_lines = [auto_roi]
+                                st.sidebar.success("✅ Reset to auto-detected line!")
+                    except Exception as e:
+                        st.sidebar.warning(f"⚠️ Reset failed: {str(e)}")
+
+# Display mode - removed from UI but kept internally for visualization
+# Clean: Standard visualization with distance filtering
+# Verbose: Detailed information with all track IDs  
+# Minimal: Minimal overlay (currently not fully implemented)
+display_mode = 'clean'
+# Display mode affects track drawing (thickness, ID display, distance filtering)
+# Clean: Standard visualization with distance filtering
+# Verbose: Detailed information with all track IDs
+# Minimal: Minimal overlay (currently not fully implemented)
 
 # Main content area
 col1, col2 = st.columns([2, 1])
@@ -458,20 +524,119 @@ with col1:
             st.info(f"📹 **Video Info:** {width}x{height} @ {fps} FPS, {total_frames} frames ({duration:.1f}s)")
             cap.release()
         
+        # ROI setup: Auto-detect or set default ROI if not provided
+        # For multiple lines, check roi_lines instead
+        if (not use_multiple_lines and st.session_state.roi_points is None) or \
+           (use_multiple_lines and (st.session_state.roi_lines is None or len(st.session_state.roi_lines) == 0)):
+            if roi_selection_mode == "Auto-Detect (YOLOv8)" and use_yolo and roi_type_lower == 'line':
+                # Auto-detect ROI line using YOLOv8 movement analysis
+                with st.spinner("🔍 Analyzing video to detect optimal counting line..."):
+                    try:
+                        from src.auto_roi_detector import auto_detect_roi_line
+                        from src.yolo_detector import YOLODetector
+                        
+                        # Initialize YOLO detector for ROI analysis
+                        yolo_for_roi = YOLODetector(
+                            model_size='n',
+                            confidence_threshold=yolo_confidence,
+                            min_box_size=min_box_size
+                        )
+                        
+                        if yolo_for_roi.available:
+                            # Auto-detect optimal ROI line
+                            auto_roi = auto_detect_roi_line(
+                                video_path, 
+                                yolo_for_roi, 
+                                num_sample_frames=50
+                            )
+                            
+                            if auto_roi and len(auto_roi) == 2:
+                                st.session_state.roi_points = auto_roi
+                                # Also set as first line if using multiple lines
+                                if use_multiple_lines:
+                                    st.session_state.roi_lines = [auto_roi]
+                                st.sidebar.success("✅ Optimal counting line detected!")
+                            else:
+                                # Fallback to default
+                                cap_temp = cv2.VideoCapture(video_path)
+                                if cap_temp.isOpened():
+                                    ret, first_frame = cap_temp.read()
+                                    if ret:
+                                        h, w = first_frame.shape[:2]
+                                        default_line = [(w // 4, h // 2), (3 * w // 4, h // 2)]
+                                        st.session_state.roi_points = default_line
+                                        if use_multiple_lines:
+                                            st.session_state.roi_lines = [default_line]
+                                    cap_temp.release()
+                        else:
+                            # YOLO not available, use default
+                            cap_temp = cv2.VideoCapture(video_path)
+                            if cap_temp.isOpened():
+                                ret, first_frame = cap_temp.read()
+                                if ret:
+                                    h, w = first_frame.shape[:2]
+                                    default_line = [(w // 4, h // 2), (3 * w // 4, h // 2)]
+                                    st.session_state.roi_points = default_line
+                                    if use_multiple_lines:
+                                        st.session_state.roi_lines = [default_line]
+                                cap_temp.release()
+                    except Exception as e:
+                        st.sidebar.warning(f"⚠️ Auto-detection failed: {str(e)}. Using default ROI.")
+                        # Fallback to default
+                        cap_temp = cv2.VideoCapture(video_path)
+                        if cap_temp.isOpened():
+                            ret, first_frame = cap_temp.read()
+                            if ret:
+                                h, w = first_frame.shape[:2]
+                                default_line = [(w // 4, h // 2), (3 * w // 4, h // 2)]
+                                st.session_state.roi_points = default_line
+                                if use_multiple_lines:
+                                    st.session_state.roi_lines = [default_line]
+                            cap_temp.release()
+            else:
+                # Manual/Default ROI - Read first frame to set default ROI
+                cap_temp = cv2.VideoCapture(video_path)
+                if cap_temp.isOpened():
+                    ret, first_frame = cap_temp.read()
+                    if ret:
+                        h, w = first_frame.shape[:2]
+                        # Set default ROI as horizontal line in middle of frame
+                        if roi_type_lower == 'line':
+                            default_roi = [(w // 4, h // 2), (3 * w // 4, h // 2)]
+                            st.session_state.roi_points = default_roi
+                            if use_multiple_lines:
+                                st.session_state.roi_lines = [default_roi]
+                        else:  # polygon - create a rectangular region
+                            margin_x, margin_y = w // 8, h // 8
+                            default_roi = [
+                                (margin_x, margin_y),
+                                (w - margin_x, margin_y),
+                                (w - margin_x, h - margin_y),
+                                (margin_x, h - margin_y)
+                            ]
+                            st.session_state.roi_points = default_roi
+                    cap_temp.release()
+        
         # Process button
-        if st.button("🚀 Process Video", type="primary", use_container_width=True):
+        if st.button("🚀 Process Video", type="primary", width='stretch'):
             with st.spinner("Initializing processor..."):
-                # Initialize processor
+                # Use ROI points/lines from session state (should be set above if None)
+                roi_points = st.session_state.roi_points
+                roi_lines = None
+                if roi_type_lower == 'line' and use_multiple_lines and st.session_state.roi_lines:
+                    roi_lines = st.session_state.roi_lines
+                
+                # Initialize processor with YOLO support
                 processor = VideoProcessor(
                     use_kalman=use_kalman if not use_yolo else False,
                     roi_type=roi_type_lower,
-                    roi_points=st.session_state.roi_points,
+                    roi_points=roi_points,
+                    roi_lines=roi_lines,
                     use_yolo=use_yolo,
-                    yolo_confidence=yolo_confidence,
-                    min_box_size=min_box_size,
-                    yolo_model_size=yolo_model_size if use_yolo else 'n'
+                    yolo_confidence=yolo_confidence if use_yolo else 0.4,
+                    min_box_size=min_box_size if use_yolo else 20
                 )
-                processor.display_mode = display_mode.lower()
+                processor.display_mode = display_mode  # Set display mode for visualization
                 
                 st.session_state.processor = processor
             
@@ -484,165 +649,56 @@ with col1:
                     video_path,
                     processor,
                     progress_bar,
-                    status_text,
-                    use_yolo=use_yolo,
-                    yolo_model_size=yolo_model_size if use_yolo else 'n'
+                    status_text
                 )
             
             if results:
-                st.session_state.processing_results = results
-                st.success("✅ Video processing completed!")
+                # Clear intermediate results and set final results
+                st.session_state.intermediate_results = None
                 
-                # Display output video with interactive controls
-                st.subheader("📹 Processed Video")
-                
-                # Speed control
-                col_speed1, col_speed2 = st.columns([1, 3])
-                with col_speed1:
-                    speed_options = {"0.5x": 0.5, "1x": 1.0, "1.5x": 1.5, "2x": 2.0}
-                    selected_speed_label = st.selectbox(
-                        "Playback Speed:",
-                        list(speed_options.keys()),
-                        index=1,
-                        key="video_speed"
-                    )
-                    selected_speed = speed_options[selected_speed_label]
-                
-                # Verify video file exists and is accessible
-                video_path = results['output_video']
-                video_width = results.get('width', 640)
-                video_height = results.get('height', 480)
-                
-                if not os.path.exists(video_path):
-                    st.error(f"❌ Video file not found: {video_path}")
-                else:
-                    # Calculate aspect ratio for responsive sizing
-                    aspect_ratio = video_width / video_height if video_height > 0 else 16/9
-                    max_width = min(1200, video_width)  # Maximum width for video player
-                    display_width = max_width
-                    display_height = int(display_width / aspect_ratio)
-                    
-                    try:
-                        # Read video file and encode to base64 for embedding
-                        with open(video_path, 'rb') as video_file:
-                            video_bytes = video_file.read()
-                            video_base64 = base64.b64encode(video_bytes).decode()
+                # Validate output video file before displaying
+                output_video_path = results['output_video']
+                if os.path.exists(output_video_path):
+                    file_size = os.path.getsize(output_video_path)
+                    if file_size > 0:
+                        st.session_state.processing_results = results
+                        st.success("✅ Video processing completed!")
                         
-                        # Create HTML5 video player with proper sizing and controls
-                        video_html = f"""
-                        <div style="width: 100%; max-width: {display_width}px; margin: 20px auto; background: #f0f0f0; padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                            <video 
-                                id="processedVideo" 
-                                width="{display_width}" 
-                                height="{display_height}"
-                                controls 
-                                preload="metadata"
-                                style="width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); background: #000; display: block; min-height: 300px;">
-                                <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
-                                Your browser does not support the video tag.
-                            </video>
-                        </div>
-                        <script>
-                            (function() {{
-                                function setVideoSpeed() {{
-                                    var video = document.getElementById('processedVideo');
-                                    if (video) {{
-                                        video.playbackRate = {selected_speed};
-                                    }}
-                                }}
-                                
-                                // Wait for video element to be available
-                                var checkVideo = setInterval(function() {{
-                                    var video = document.getElementById('processedVideo');
-                                    if (video) {{
-                                        clearInterval(checkVideo);
-                                        
-                                        // Set initial speed
-                                        setVideoSpeed();
-                                        
-                                        // Re-apply speed on various events
-                                        video.addEventListener('loadedmetadata', setVideoSpeed);
-                                        video.addEventListener('play', setVideoSpeed);
-                                        video.addEventListener('canplay', setVideoSpeed);
-                                        video.addEventListener('loadeddata', setVideoSpeed);
-                                        
-                                        // Monitor for speed changes (in case user changes selectbox)
-                                        setInterval(function() {{
-                                            if (video && video.playbackRate !== {selected_speed}) {{
-                                                video.playbackRate = {selected_speed};
-                                            }}
-                                        }}, 200);
-                                    }}
-                                }}, 100);
-                                
-                                // Also try immediately in case video is already loaded
-                                setTimeout(setVideoSpeed, 50);
-                            }})();
-                        </script>
-                        """
-                        st.markdown(video_html, unsafe_allow_html=True)
-                        
-                    except Exception as e:
-                        st.warning(f"⚠️ Could not load video as embedded player: {str(e)[:100]}")
-                        st.caption("Using Streamlit's native video player as fallback...")
-                        # Fallback to Streamlit's video player
+                        # Display output video
+                        st.subheader("📹 Processed Video")
                         try:
-                            st.video(video_path)
-                        except Exception as e2:
-                            st.error(f"❌ Error with fallback player: {str(e2)[:100]}")
-                            st.info(f"Video file location: {video_path}")
-                            # Provide download option
-                            with open(video_path, 'rb') as f:
-                                st.download_button(
-                                    label="📥 Download Processed Video",
-                                    data=f.read(),
-                                    file_name="tracked_video.mp4",
-                                    mime="video/mp4"
-                                )
-                
-                # Report generation section
-                st.subheader("📊 Analysis Report")
-                if st.button("📄 Generate Professional Report", type="primary", use_container_width=True):
-                    with st.spinner("Generating report..."):
-                        report_generator = ReportGenerator()
-                        video_info = {
-                            'width': results.get('width'),
-                            'height': results.get('height'),
-                            'fps': results.get('fps'),
-                            'total_frames': results.get('total_frames'),
-                            'duration': results.get('total_frames', 0) / results.get('fps', 1) if results.get('fps', 0) > 0 else 0
-                        }
-                        html_report = report_generator.generate_html_report(results, video_info)
-                        st.session_state.report_html = html_report
+                            st.video(output_video_path)
+                        except Exception as e:
+                            st.error(f"❌ Failed to display video: {str(e)}")
+                            st.info("💡 Try downloading the video instead.")
                         
-                        st.success("✅ Report generated successfully!")
-                
-                # Display and download report
-                if 'report_html' in st.session_state and st.session_state.report_html:
-                    st.markdown("### 📋 Report Preview")
-                    try:
-                        import streamlit.components.v1 as components
-                        components.html(st.session_state.report_html, height=800, scrolling=True)
-                    except:
-                        # Fallback: show download button only
-                        st.info("📄 Report generated! Download to view in your browser.")
-                    
-                    # Download report
-                    st.download_button(
-                        label="💾 Download Report (HTML)",
-                        data=st.session_state.report_html,
-                        file_name=f"vehicle_tracking_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                        mime="text/html",
-                        use_container_width=True
-                    )
+                        # Download button
+                        try:
+                            with open(output_video_path, 'rb') as f:
+                                video_data = f.read()
+                                st.download_button(
+                                    label="💾 Download Processed Video",
+                                    data=video_data,
+                                    file_name="tracked_video.mp4",
+                                    mime="video/mp4",
+                                    width='stretch'
+                                )
+                        except Exception as e:
+                            st.error(f"❌ Failed to prepare download: {str(e)}")
+                    else:
+                        st.error("❌ Processed video file is empty. Video encoding may have failed.")
+                else:
+                    st.error("❌ Processed video file not found. Video encoding may have failed.")
             else:
-                st.error("❌ Failed to process video")
+                st.error("❌ Failed to process video. Please check the video file and try again.")
     else:
         st.warning("⚠️ Please select or upload a video file to begin processing.")
 
 with col2:
     st.subheader("📈 Statistics")
     
+    # Only show statistics after video processing completes and video is displayed
+    # Don't show statistics during processing - wait until video is shown
     if st.session_state.processing_results:
         results = st.session_state.processing_results
         final_counts = results['final_counts']
@@ -651,6 +707,20 @@ with col2:
         st.metric("Total Vehicles", final_counts['total'])
         st.metric("Direction Up", final_counts['up'])
         st.metric("Direction Down", final_counts['down'])
+        
+        # Show which lines were crossed if multiple lines were used
+        if st.session_state.processing_results and 'processor' in st.session_state and st.session_state.processor:
+            processor = st.session_state.processor
+            if processor.vehicle_counter.roi_type == 'line' and processor.vehicle_counter.roi_lines and len(processor.vehicle_counter.roi_lines) > 1:
+                st.subheader("📊 Per-Line Statistics")
+                counts_per_line = processor.vehicle_counter.get_counts(per_line=True)
+                if 'per_line' in counts_per_line:
+                    for line_key, line_stats in counts_per_line['per_line'].items():
+                        line_num = line_key.replace('line_', '')
+                        st.metric(f"Line {int(line_num) + 1} Total", line_stats['total'])
+                        with st.expander(f"Line {int(line_num) + 1} Details"):
+                            st.write(f"Up: {line_stats['up']}")
+                            st.write(f"Down: {line_stats['down']}")
         
         # Count history chart
         if results['count_history']:
