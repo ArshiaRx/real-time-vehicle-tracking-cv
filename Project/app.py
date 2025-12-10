@@ -16,11 +16,26 @@ import sys
 from typing import Optional, Tuple
 import imageio
 
+# Try to import drawable canvas, fallback to None if not available
+try:
+    from streamlit_drawable_canvas import st_canvas
+    CANVAS_AVAILABLE = True
+except ImportError:
+    st_canvas = None
+    CANVAS_AVAILABLE = False
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = None
+    PIL_AVAILABLE = False
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.video_processor import VideoProcessor
-from src.utils import ROISelector
+from src.utils import ROISelector, draw_roi
 
 # Page configuration
 st.set_page_config(
@@ -46,6 +61,40 @@ st.markdown("""
         border-radius: 0.5rem;
         border-left: 4px solid #1f77b4;
     }
+    /* Enhanced UI Styling */
+    .stSidebar {
+        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+    }
+    .stButton > button {
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .stExpander {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    .stSlider {
+        padding: 0.5rem 0;
+    }
+    h3 {
+        color: #2c3e50;
+        border-bottom: 2px solid #3498db;
+        padding-bottom: 0.5rem;
+    }
+    /* Canvas container styling */
+    .canvas-container {
+        border: 2px solid #3498db;
+        border-radius: 8px;
+        padding: 1rem;
+        background: #ffffff;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -68,6 +117,34 @@ if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
 if 'intermediate_results' not in st.session_state:
     st.session_state.intermediate_results = None
+
+def get_first_frame(video_path: str):
+    """Extract first frame from video for preview."""
+    if not video_path or not os.path.exists(video_path):
+        return None
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        return frame
+    return None
+
+def create_canvas_background(frame, existing_lines=None):
+    """Create background image with existing lines drawn."""
+    if frame is None or not PIL_AVAILABLE:
+        return None
+    bg = frame.copy()
+    if existing_lines:
+        for line in existing_lines:
+            if len(line) == 2:
+                pt1, pt2 = line[0], line[1]
+                cv2.line(bg, pt1, pt2, (0, 255, 0), 3)
+                # Draw endpoints
+                cv2.circle(bg, pt1, 5, (0, 255, 0), -1)
+                cv2.circle(bg, pt2, 5, (0, 255, 0), -1)
+    return Image.fromarray(cv2.cvtColor(bg, cv2.COLOR_BGR2RGB))
 
 def process_video_streamlit(video_path: str, processor: VideoProcessor, 
                             progress_bar, status_text) -> dict:
@@ -434,44 +511,197 @@ if roi_type_lower == 'line':
             # Remove excess lines
             st.session_state.roi_lines = st.session_state.roi_lines[:num_lines]
         
-        # Manual adjustment for each line
-        st.sidebar.subheader("✏️ Manual Line Adjustment")
-        for line_idx in range(num_lines):
-            with st.sidebar.expander(f"Line {line_idx + 1}", expanded=(line_idx == 0)):
-                if video_path and os.path.exists(video_path):
-                    cap_temp = cv2.VideoCapture(video_path)
-                    if cap_temp.isOpened():
-                        w = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        cap_temp.release()
-                    else:
-                        w, h = 1920, 1080  # Default
+        # Visual line drawing interface
+        st.sidebar.subheader("✏️ Visual Line Drawing")
+        
+        if video_path and os.path.exists(video_path):
+            # Get video dimensions
+            cap_temp = cv2.VideoCapture(video_path)
+            if cap_temp.isOpened():
+                w = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap_temp.release()
+            else:
+                w, h = 1920, 1080  # Default
+        else:
+            w, h = 1920, 1080  # Default
+            st.sidebar.warning("⚠️ Please upload or select a video first to draw lines.")
+        
+        if video_path and os.path.exists(video_path):
+            # Get first frame for preview
+            preview_frame = get_first_frame(video_path)
+            
+            if preview_frame is not None:
+                # Create background with existing lines
+                bg_image = create_canvas_background(preview_frame, st.session_state.roi_lines)
+                
+                # Calculate canvas size (maintain aspect ratio, max width 600px)
+                max_width = 600
+                aspect_ratio = w / h
+                if w > max_width:
+                    canvas_width = max_width
+                    canvas_height = int(max_width / aspect_ratio)
                 else:
-                    w, h = 1920, 1080  # Default
+                    canvas_width = w
+                    canvas_height = h
                 
-                # Get current line coordinates
-                if line_idx < len(st.session_state.roi_lines):
-                    current_line = st.session_state.roi_lines[line_idx]
-                    x1, y1 = current_line[0]
-                    x2, y2 = current_line[1]
+                if CANVAS_AVAILABLE:
+                    st.sidebar.markdown("**Draw lines on the preview frame:**")
+                    st.sidebar.markdown("💡 **Tip:** Draw a line by clicking and dragging. Each stroke creates a line from start to end point.")
+                    
+                    # Drawable canvas - using freedraw mode, we'll treat each stroke as a line
+                    canvas_result = st_canvas(
+                        fill_color="rgba(0, 255, 0, 0.2)",
+                        stroke_width=4,
+                        stroke_color="#00FF00",
+                        background_image=bg_image if bg_image else None,
+                        update_streamlit=True,
+                        width=canvas_width,
+                        height=canvas_height,
+                        drawing_mode="freedraw",
+                        point_display_radius=6,
+                        key="line_drawing_canvas",
+                        display_toolbar=True
+                    )
+                    
+                    # Convert canvas drawings to line coordinates
+                    # For freedraw mode, extract paths and use first/last points as line endpoints
+                    if canvas_result and canvas_result.json_data:
+                        new_lines = []
+                        objects = canvas_result.json_data.get("objects", [])
+                        canvas_w = canvas_result.json_data.get("canvasWidth", canvas_width)
+                        canvas_h = canvas_result.json_data.get("canvasHeight", canvas_height)
+                        
+                        for obj in objects:
+                            if obj.get("type") == "path":
+                                # Extract path points - path is typically a list of [x, y] coordinates
+                                path = obj.get("path", [])
+                                if len(path) >= 2:
+                                    # Get first point (start of stroke)
+                                    start = path[0]
+                                    # Get last point (end of stroke)
+                                    end = path[-1]
+                                    
+                                    # Handle different path formats and ensure we get numeric values
+                                    try:
+                                        if isinstance(start, (list, tuple)) and len(start) >= 2:
+                                            x1_val, y1_val = start[0], start[1]
+                                        elif isinstance(start, dict):
+                                            x1_val, y1_val = start.get("x", 0), start.get("y", 0)
+                                        else:
+                                            continue
+                                        
+                                        if isinstance(end, (list, tuple)) and len(end) >= 2:
+                                            x2_val, y2_val = end[0], end[1]
+                                        elif isinstance(end, dict):
+                                            x2_val, y2_val = end.get("x", 0), end.get("y", 0)
+                                        else:
+                                            continue
+                                        
+                                        # Convert to float/int, handling nested structures
+                                        def extract_number(val):
+                                            """Extract numeric value from potentially nested structure."""
+                                            if isinstance(val, (int, float)):
+                                                return float(val)
+                                            elif isinstance(val, (list, tuple)) and len(val) > 0:
+                                                return extract_number(val[0])
+                                            elif isinstance(val, dict):
+                                                return extract_number(val.get("x", val.get("y", 0)))
+                                            else:
+                                                return 0.0
+                                        
+                                        x1 = extract_number(x1_val)
+                                        y1 = extract_number(y1_val)
+                                        x2 = extract_number(x2_val)
+                                        y2 = extract_number(y2_val)
+                                        
+                                        # Ensure all values are numeric (not sequences)
+                                        if not all(isinstance(v, (int, float)) for v in [x1, y1, x2, y2]):
+                                            continue
+                                        
+                                        # Scale to actual frame dimensions
+                                        scale_x = float(w) / float(canvas_w)
+                                        scale_y = float(h) / float(canvas_h)
+                                        x1 = max(0, min(w - 1, int(float(x1) * scale_x)))
+                                        y1 = max(0, min(h - 1, int(float(y1) * scale_y)))
+                                        x2 = max(0, min(w - 1, int(float(x2) * scale_x)))
+                                        y2 = max(0, min(h - 1, int(float(y2) * scale_y)))
+                                        
+                                        # Only add if line has meaningful length
+                                        if abs(x2 - x1) > 10 or abs(y2 - y1) > 10:
+                                            new_lines.append([(x1, y1), (x2, y2)])
+                                    except (TypeError, ValueError, IndexError) as e:
+                                        # Skip this path if we can't extract valid coordinates
+                                        continue
+                        
+                        if new_lines:
+                            # Update session state with new lines
+                            # Keep only the number of lines requested
+                            st.session_state.roi_lines = new_lines[:num_lines]
+                            # If we have fewer lines than requested, add default ones
+                            while len(st.session_state.roi_lines) < num_lines:
+                                line_y = h // 2 + (len(st.session_state.roi_lines) - num_lines // 2) * (h // (num_lines + 1))
+                                st.session_state.roi_lines.append([(w // 4, line_y), (3 * w // 4, line_y)])
+                    
+                    # Display current lines info
+                    if st.session_state.roi_lines:
+                        st.sidebar.markdown("---")
+                        st.sidebar.markdown(f"**Current Lines: {len(st.session_state.roi_lines)}**")
+                        for idx, line in enumerate(st.session_state.roi_lines[:num_lines]):
+                            pt1, pt2 = line[0], line[1]
+                            st.sidebar.text(f"Line {idx + 1}: ({pt1[0]}, {pt1[1]}) → ({pt2[0]}, {pt2[1]})")
+                    
+                    # Clear and reset buttons
+                    col1, col2 = st.sidebar.columns(2)
+                    with col1:
+                        if st.button("🗑️ Clear All", key="clear_lines"):
+                            st.session_state.roi_lines = []
+                            st.rerun()
+                    with col2:
+                        if st.button("🔄 Reset", key="reset_lines_visual"):
+                            # Reset to default horizontal lines
+                            default_lines = []
+                            for i in range(num_lines):
+                                line_y = h // 2 + (i - num_lines // 2) * (h // (num_lines + 1))
+                                default_lines.append([(w // 4, line_y), (3 * w // 4, line_y)])
+                            st.session_state.roi_lines = default_lines
+                            st.rerun()
                 else:
-                    x1, y1 = w // 4, h // 2
-                    x2, y2 = 3 * w // 4, h // 2
-                
-                # Sliders for line endpoints
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write("**Start Point**")
-                    x1_new = st.slider("X1", 0, w, x1, key=f"x1_{line_idx}")
-                    y1_new = st.slider("Y1", 0, h, y1, key=f"y1_{line_idx}")
-                with col2:
-                    st.write("**End Point**")
-                    x2_new = st.slider("X2", 0, w, x2, key=f"x2_{line_idx}")
-                    y2_new = st.slider("Y2", 0, h, y2, key=f"y2_{line_idx}")
-                
-                # Update line if changed
-                if (x1_new, y1_new) != (x1, y1) or (x2_new, y2_new) != (x2, y2):
-                    st.session_state.roi_lines[line_idx] = [(x1_new, y1_new), (x2_new, y2_new)]
+                    # Fallback to slider-based input if canvas is not available
+                    st.sidebar.warning("⚠️ Canvas drawing not available. Using coordinate sliders instead.")
+                    st.sidebar.subheader("✏️ Manual Line Adjustment (Fallback)")
+                    for line_idx in range(num_lines):
+                        with st.sidebar.expander(f"Line {line_idx + 1}", expanded=(line_idx == 0)):
+                            # Get current line coordinates
+                            if line_idx < len(st.session_state.roi_lines):
+                                current_line = st.session_state.roi_lines[line_idx]
+                                x1, y1 = current_line[0]
+                                x2, y2 = current_line[1]
+                            else:
+                                x1, y1 = w // 4, h // 2
+                                x2, y2 = 3 * w // 4, h // 2
+                            
+                            # Sliders for line endpoints
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write("**Start Point**")
+                                x1_new = st.slider("X1", 0, w, x1, key=f"x1_{line_idx}")
+                                y1_new = st.slider("Y1", 0, h, y1, key=f"y1_{line_idx}")
+                            with col2:
+                                st.write("**End Point**")
+                                x2_new = st.slider("X2", 0, w, x2, key=f"x2_{line_idx}")
+                                y2_new = st.slider("Y2", 0, h, y2, key=f"y2_{line_idx}")
+                            
+                            # Update line if changed
+                            if (x1_new, y1_new) != (x1, y1) or (x2_new, y2_new) != (x2, y2):
+                                if line_idx >= len(st.session_state.roi_lines):
+                                    st.session_state.roi_lines.append([(x1_new, y1_new), (x2_new, y2_new)])
+                                else:
+                                    st.session_state.roi_lines[line_idx] = [(x1_new, y1_new), (x2_new, y2_new)]
+            else:
+                st.sidebar.error("❌ Could not load video frame for preview.")
+        else:
+            st.sidebar.info("📹 Upload or select a video to enable visual line drawing.")
         
         # Reset to auto-detected button
         if st.sidebar.button("🔄 Reset to Auto-Detected", key="reset_lines"):
@@ -618,7 +848,7 @@ with col1:
                     cap_temp.release()
         
         # Process button
-        if st.button("🚀 Process Video", type="primary", width='stretch'):
+        if st.button("🚀 Process Video", type="primary"):
             with st.spinner("Initializing processor..."):
                 # Use ROI points/lines from session state (should be set above if None)
                 roi_points = st.session_state.roi_points
@@ -681,7 +911,7 @@ with col1:
                                     data=video_data,
                                     file_name="tracked_video.mp4",
                                     mime="video/mp4",
-                                    width='stretch'
+                                    use_container_width=True
                                 )
                         except Exception as e:
                             st.error(f"❌ Failed to prepare download: {str(e)}")

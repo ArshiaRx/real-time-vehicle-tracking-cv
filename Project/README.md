@@ -1,596 +1,282 @@
-# 🚗 Advanced Vehicle Tracking & Counting System
+# Vehicle Tracking & Counting System - Technical Documentation
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-green.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
-![License](https://img.shields.io/badge/License-Educational-yellow.svg)
-
-A sophisticated real-time vehicle tracking and counting system built for computer vision applications. Features optical flow tracking, YOLOv8 detection, advanced data association, perspective transformation, and an interactive web interface.
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Computer_Vision-Tracking-brightgreen" alt="CV Tracking"/>
-  <img src="https://img.shields.io/badge/Deep_Learning-YOLO-orange" alt="YOLO"/>
-  <img src="https://img.shields.io/badge/Algorithm-Kalman_Filter-blue" alt="Kalman"/>
-</p>
+This document covers the implementation details, architecture decisions, and usage specifics for the vehicle tracking system.
 
 ---
 
-## 🎯 Key Features
+## 📐 Architecture Overview
 
-### Core Capabilities
-- **🎥 Dual Tracking Modes**: Optical Flow (Lucas-Kanade) or YOLOv8 detection
-- **🧠 Advanced Data Association**: IoU-based matching with appearance features
-- **📊 Smart Track Management**: Automatic lifecycle handling, re-identification
-- **🎯 Accurate Counting**: Line or polygon-based ROI with directional counting
-- **📐 Perspective Transformation**: Bird's eye view for improved accuracy
-- **⚡ Multi-Scale Detection**: Enhanced detection at various distances
-- **🔄 Temporal Filtering**: Smooth, consistent tracking across frames
-- **🌐 Web Interface**: Modern Streamlit dashboard with real-time visualization
+The system follows a modular pipeline design:
 
-### Advanced Features
-- **Robust Occlusion Handling**: Tracks survive brief occlusions using Kalman prediction
-- **Re-identification**: Recovers lost tracks when objects reappear
-- **Appearance Matching**: Color histogram features for distinguishing similar vehicles
-- **Camera Calibration**: Real-world speed estimation with perspective correction
-- **Interactive Charts**: Live statistics with Plotly visualizations
-- **Export Options**: Download tracked videos and CSV statistics
-
----
-
-## 🖼️ Demo
-
-### Web Interface
-```bash
-streamlit run app.py
 ```
+Input Video/Webcam
+       │
+       ▼
+┌──────────────────┐
+│  Detection       │  ← Either Optical Flow OR YOLOv8
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Tracking        │  ← Track ID assignment, trajectory history
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Kalman Filter   │  ← Smooths trajectories (optical flow mode only)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Vehicle Counter │  ← ROI crossing detection
+└────────┬─────────┘
+         │
+         ▼
+   Annotated Output + Statistics
+```
+
+---
+
+## 🔧 Core Components
+
+### 1. Video Processor (`src/video_processor.py`)
+
+The main orchestrator. Initializes all components and runs the frame-by-frame loop.
+
+```python
+processor = VideoProcessor(
+    use_kalman=True,      # Enable trajectory smoothing
+    roi_type='line',      # 'line' or 'polygon'
+    roi_points=None,      # User-defined or auto-detected
+    use_yolo=False,       # Toggle YOLO vs optical flow
+    yolo_confidence=0.4,  # Detection threshold
+    min_box_size=20       # Filter tiny detections
+)
+```
+
+### 2. Optical Flow Tracker (`src/optical_flow_tracker.py`)
+
+Uses **Lucas-Kanade sparse optical flow** to track feature points across frames.
+
+**How it works:**
+1. Detect "good features to track" using Shi-Tomasi corner detection
+2. Track those points frame-to-frame using Lucas-Kanade
+3. Manage track lifecycle (create, update, delete)
+
+**Parameters** (in code):
+```python
+lk_params = dict(
+    winSize=(15, 15),    # Search window size
+    maxLevel=2,          # Pyramid levels
+    criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+)
+
+feature_params = dict(
+    maxCorners=500,      # Max features to track
+    qualityLevel=0.01,   # Feature quality threshold
+    minDistance=10,      # Min distance between features
+    blockSize=7
+)
+```
+
+**Limitations:**
+- Struggles with vehicles that have similar colors to the road
+- Can't detect stationary vehicles
+- Features may drift or get lost in low-texture areas
+
+### 3. YOLO Detector (`src/yolo_detector.py`)
+
+Wraps **YOLOv8** for vehicle detection. More robust than optical flow but slower.
+
+**Vehicle classes detected** (COCO IDs):
+- 2: car
+- 3: motorcycle
+- 5: bus
+- 7: truck
+
+**Key features:**
+- Confidence thresholding
+- Minimum box size filtering (removes distant/small detections)
+- Track ID assignment using IoU matching between frames
+
+### 4. Kalman Filter (`src/kalman_filter.py`)
+
+Implements a **constant velocity model** for trajectory smoothing.
+
+**State vector:** `[x, y, vx, vy]` (position + velocity)
+
+**Why it helps:**
+- Smooths noisy optical flow measurements
+- Predicts position during brief occlusions
+- Provides velocity estimates
+
+**Note:** Kalman filtering is disabled when using YOLO mode (YOLO's built-in tracking is already smooth).
+
+### 5. Vehicle Counter (`src/vehicle_counter.py`)
+
+Handles ROI-based counting logic.
+
+**Line ROI:**
+- Detects when a track crosses from one side to the other
+- Determines direction (up/down) based on crossing vector
+
+**Polygon ROI:**
+- Tracks whether each vehicle is inside or outside
+- Counts entries and exits separately
+
+**Anti-double-counting:**
+- Each track ID can only trigger one count
+- Cooldown period prevents rapid re-counting
+
+### 6. Auto ROI Detector (`src/auto_roi_detector.py`)
+
+Automatically suggests a counting line by analyzing vehicle movement patterns in the first few seconds of video. Uses YOLO to detect vehicles and estimates the main flow direction.
+
+---
+
+## 🎮 Usage Examples
 
 ### Command Line
-```bash
-# Quick demo with YOLO
-python main.py --video data/sample_traffic_test.mp4 --yolo
 
-# Full featured
-python main.py --video data/sample_traffic_test.mp4 --yolo --confidence 0.45 --output results/tracked.mp4
+```bash
+# Basic - optical flow tracking
+python main.py --video data/sample_traffic_test2.mp4
+
+# YOLO detection (recommended for better accuracy)
+python main.py --video data/sample_traffic_test2.mp4 --yolo
+
+# Adjust YOLO sensitivity
+python main.py --video data/sample_traffic_test2.mp4 --yolo --confidence 0.5 --min-box-size 30
+
+# Custom direction labels
+python main.py --video data/sample_traffic_test2.mp4 --direction-up "Northbound" --direction-down "Southbound"
+
+# Save output without display (batch processing)
+python main.py --video data/sample_traffic_test2.mp4 --yolo --no-display --output output/result.mp4
+
+# Polygon ROI instead of line
+python main.py --video data/sample_traffic_test2.mp4 --roi-type polygon
+
+# Adjust playback speed
+python main.py --video data/sample_traffic_test2.mp4 --speed 2.0
 ```
 
-**Sample Output**: Check `output/` folder for tracked videos
-
----
-
-## 📋 Table of Contents
-
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Usage](#-usage)
-  - [Web Interface](#web-interface-recommended)
-  - [Command Line](#command-line-interface)
-- [Architecture](#-architecture)
-- [Algorithms](#-algorithms)
-- [Documentation](#-documentation)
-- [Project Structure](#-project-structure)
-- [Performance](#-performance)
-- [Troubleshooting](#-troubleshooting)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Author](#-author)
-
----
-
-## 🚀 Installation
-
-### Prerequisites
-- Python 3.8 or higher
-- pip package manager
-- (Optional) CUDA-capable GPU for faster YOLO inference
-
-### Steps
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Project
-   ```
-
-2. **Create virtual environment** (recommended)
-   ```bash
-   python -m venv venv
-   
-   # Activate (Windows)
-   venv\Scripts\activate
-   
-   # Activate (Linux/Mac)
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Verify installation**
-   ```bash
-   python -c "import cv2, streamlit, ultralytics; print('✅ Installation successful!')"
-   ```
-
----
-
-## ⚡ Quick Start
-
-### Option 1: Web Interface (Easiest)
+### Web Interface
 
 ```bash
 streamlit run app.py
 ```
-- Opens in your browser automatically
-- Select demo video or upload your own
+
+Features:
+- Upload videos or use demo files
 - Adjust parameters with sliders
-- Process and download results
+- Auto-detect optimal counting line
+- Download processed videos and CSV statistics
+- Real-time progress tracking
 
-### Option 2: Command Line (Fastest)
+---
+
+## ⚙️ Configuration
+
+Default values are in `config.py`. You can modify these or pass them as CLI arguments.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `YOLO_CONFIDENCE_THRESHOLD` | 0.4 | Min confidence for YOLO detections |
+| `YOLO_MIN_BOX_SIZE` | 20 | Filter boxes smaller than this (pixels) |
+| `MAX_TRACK_LENGTH` | 30 | Max points in track history |
+| `MIN_TRACK_LENGTH` | 5 | Min points before track is valid |
+
+---
+
+## 🐛 Troubleshooting
+
+### No vehicles detected
+
+- **Optical flow mode**: Check if video has enough texture/contrast. Try YOLO mode.
+- **YOLO mode**: Lower the confidence threshold (`--confidence 0.3`)
+
+### Vehicles being double-counted
+
+- ROI might be too close to where vehicles slow down/stop
+- Try repositioning the counting line
+- Increase `min_box_size` to filter jittery small detections
+
+### Tracking IDs keep changing
+
+- Common with optical flow when vehicles have similar colors
+- Use YOLO mode for more stable tracking
+- This is a known limitation of appearance-agnostic tracking
+
+### Slow performance
+
+- Use `--no-display` for batch processing
+- Lower video resolution
+- YOLO is slower than optical flow (~10-15 FPS vs ~60 FPS on CPU)
+
+### Streamlit won't start
 
 ```bash
-# Process demo video
-python main.py --video data/sample_traffic_test.mp4 --yolo
-
-# Interactive controls: SPACE (pause), 'q' (quit), 't' (toggle tracks)
+# Try this instead of 'streamlit run app.py'
+python -m streamlit run app.py
 ```
 
 ---
 
-## 📖 Usage
+## 📊 Output Files
 
-### Web Interface (Recommended)
+Processed videos are saved to `output/` with the suffix `_tracked.mp4`.
 
-**Features:**
-- 🎬 Demo videos included
-- 📤 Upload your own videos (MP4, AVI, MOV)
-- 🎛️ Real-time parameter adjustment
-- 📊 Interactive charts and statistics
-- 💾 Download processed videos and data
+The web interface also provides:
+- CSV export of frame-by-frame counts
+- Interactive charts (count over time, active tracks)
 
-**Steps:**
-1. Launch: `streamlit run app.py`
-2. Choose "Demo Videos" or "Upload Video"
-3. Adjust parameters in sidebar:
-   - YOLO confidence (0.1-0.9)
-   - Min box size (10-100 px)
-   - ROI type (line/polygon)
-   - Display mode (clean/verbose/minimal)
-4. Click "Process Video"
-5. View results and download
+---
 
-### Command Line Interface
+## 🔮 Future Work
 
-**Basic Commands:**
+- [ ] Frontend web application (React/TypeScript) for better UX
+- [ ] RTSP stream support for live camera feeds
+- [ ] Vehicle type classification (separate counts by car/truck/bus)
+- [ ] Speed estimation using perspective calibration
+- [ ] Database integration for historical analytics
+- [ ] GPU acceleration for real-time YOLO inference
+
+---
+
+## 🧪 Testing
+
+Run the test suite to verify components work:
 
 ```bash
-# YOLO detection (recommended)
-python main.py --video input.mp4 --yolo
-
-# Custom confidence and box size
-python main.py --video input.mp4 --yolo --confidence 0.5 --min-box-size 30
-
-# Save output
-python main.py --video input.mp4 --yolo --output results/tracked.mp4
-
-# Webcam tracking
-python main.py --webcam --yolo
-
-# Headless mode (no display, faster)
-python main.py --video input.mp4 --yolo --no-display
-
-# Custom direction labels
-python main.py --video input.mp4 --yolo --direction-up "Northbound" --direction-down "Southbound"
+python test_system.py
 ```
 
-**Interactive Controls:**
-| Key | Function |
-|-----|----------|
-| SPACE | Pause/Resume |
-| s | Step one frame |
-| t | Toggle tracks |
-| v | Verbose mode |
-| m | Minimal mode |
-| l | Toggle legend |
-| h | Toggle help |
-| r | Reset counters |
-| q / ESC | Quit |
-
-**Full Options:**
-```bash
-python main.py --help
-```
+This tests:
+- Kalman filter prediction/update
+- Vehicle counter crossing detection
+- Optical flow tracker initialization
+- Video processor integration
 
 ---
 
-## 🏗️ Architecture
+## 📚 Algorithm References
 
-### System Overview
-
-```
-┌─────────────────┐
-│  Input Video    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Perspective Transform      │  (Optional)
-│  (Bird's Eye View)          │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Detection Layer            │
-│  • YOLO (YOLOv8n)          │
-│  • Multi-scale detection    │
-│  • Temporal filtering       │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Data Association           │
-│  • IoU matching             │
-│  • Appearance features      │
-│  • Hungarian algorithm      │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Track Management           │
-│  • Track lifecycle          │
-│  • Kalman prediction        │
-│  • Re-identification        │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Vehicle Counter            │
-│  • ROI crossing detection   │
-│  • Directional counting     │
-└────────┬────────────────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  Output                     │
-│  • Annotated video          │
-│  • Statistics (CSV)         │
-│  • Real-time visualization  │
-└─────────────────────────────┘
-```
-
-### Component Details
-
-**1. Detection (`yolo_detector.py`)**
-- YOLOv8 nano model for speed/accuracy balance
-- Multi-scale detection (0.8x, 1.0x, 1.2x)
-- Class-specific confidence thresholds
-- Temporal consistency filtering
-- NMS for duplicate removal
-
-**2. Tracking Association (`tracker_association.py`)**
-- IoU-based spatial matching
-- HSV color histogram appearance features
-- Hungarian algorithm for optimal assignment
-- Confidence scoring and track quality assessment
-
-**3. Track Management (`track_manager.py`)**
-- Track lifecycle: Tentative → Confirmed → Occluded → Lost
-- Kalman filter for state prediction
-- Re-identification for recovered tracks
-- Automatic track birth/death handling
-
-**4. Perspective Transform (`perspective_transform.py`)**
-- Homography matrix computation
-- Bird's eye view transformation
-- Camera calibration for real-world measurements
-- Speed estimation (m/s, km/h)
-
-**5. Vehicle Counting (`vehicle_counter.py`)**
-- Line-based crossing detection
-- Polygon entry/exit detection
-- Directional flow analysis
-- Crossing event animations
+- **Lucas-Kanade Optical Flow**: Lucas, B. D., & Kanade, T. (1981). "An iterative image registration technique with an application to stereo vision."
+- **Kalman Filter**: Kalman, R. E. (1960). "A New Approach to Linear Filtering and Prediction Problems."
+- **Shi-Tomasi Corners**: Shi, J., & Tomasi, C. (1994). "Good features to track."
+- **YOLO**: Redmon, J., et al. (2016). "You Only Look Once: Unified, Real-Time Object Detection."
 
 ---
 
-## 🧮 Algorithms
+## 👤 Author
 
-### Optical Flow: Lucas-Kanade Method
-Tracks sparse features (corners) across frames using brightness constancy assumption.
+**Arshia Rahim**  
+Computer Engineering (Software) @ Toronto Metropolitan University
 
-**Advantages:**
-- Fast, no ML required
-- Works well for textured objects
-
-**Limitations:**
-- Struggles with similar colors
-- Can't detect stationary objects
-
-### Object Detection: YOLOv8
-Single-stage detector predicting boxes and classes directly.
-
-**Advantages:**
-- Robust to appearance
-- Detects stationary vehicles
-- High accuracy
-
-**Limitations:**
-- Slower than optical flow
-- Requires more compute
-
-### Data Association: IoU + Appearance
-Combines spatial overlap (IoU) with visual similarity (color histograms).
-
-**Formula:**
-```
-Similarity = α·IoU + β·Appearance
-Cost = 1 - Similarity
-```
-
-Solved using **Hungarian Algorithm** for optimal assignment.
-
-### Kalman Filtering
-Predicts future state and smooths noisy measurements.
-
-**State Vector:**
-```
-x = [x_center, y_center, width, height, vx, vy, vw, vh]
-```
-
-**Benefits:**
-- Smooth trajectories
-- Predict during occlusions
-- Velocity estimation
-
-### Perspective Transformation
-Maps trapezoid (road view) to rectangle (bird's eye view).
-
-**Homography Matrix** H computed from 4-point correspondence:
-```python
-H = cv2.getPerspectiveTransform(src_points, dst_points)
-```
-
-**Benefits:**
-- Remove perspective distortion
-- Accurate distance measurements
-- Better occlusion handling
+- GitHub: [@ArshiaRx](https://github.com/ArshiaRx)
+- LinkedIn: [in/arshia-rahim](https://www.linkedin.com/in/arshia-rahim)
 
 ---
 
-## 📚 Documentation
-
-- **[THEORY.md](THEORY.md)**: Deep dive into CV algorithms and mathematics
-- **[USAGE_GUIDE.md](USAGE_GUIDE.md)**: Complete user guide with examples
-- **[QUICKSTART.md](QUICKSTART.md)**: Get started in 5 minutes
-- **Code Documentation**: Docstrings in all modules
-
-**Topics Covered:**
-- Optical Flow (Lucas-Kanade)
-- Kalman Filtering
-- Data Association (IoU, Hungarian Algorithm)
-- Perspective Transformation (Homography)
-- YOLO Architecture
-- Multi-Scale Detection
-- Temporal Filtering
-
----
-
-## 📁 Project Structure
-
-```
-Project/
-├── app.py                      # Streamlit web application
-├── main.py                     # Command-line interface
-├── config.py                   # Configuration parameters
-├── requirements.txt            # Python dependencies
-├── README.md                   # This file
-├── THEORY.md                   # Algorithm explanations
-├── USAGE_GUIDE.md             # Detailed user guide
-├── QUICKSTART.md              # Quick start guide
-│
-├── src/                        # Source code
-│   ├── __init__.py
-│   ├── optical_flow_tracker.py      # Lucas-Kanade optical flow
-│   ├── yolo_detector.py             # Enhanced YOLO detection
-│   ├── tracker_association.py       # IoU + appearance matching
-│   ├── track_manager.py             # Track lifecycle management
-│   ├── kalman_filter.py             # Kalman filter implementation
-│   ├── vehicle_counter.py           # ROI-based counting
-│   ├── perspective_transform.py     # Homography & bird's eye view
-│   ├── video_processor.py           # Original processor
-│   ├── enhanced_video_processor.py  # Enhanced processor
-│   ├── streamlit_processor.py       # Streamlit wrapper
-│   └── utils.py                     # Visualization utilities
-│
-├── data/                       # Input videos
-│   ├── sample_traffic_test.mp4
-│   └── sample_traffic_test2.mp4
-│
-├── output/                     # Processed videos
-│   └── (generated outputs)
-│
-├── .streamlit/                # Streamlit configuration
-│   └── config.toml
-│
-└── yolov8n.pt                 # YOLO model weights
-```
-
----
-
-## ⚡ Performance
-
-### Processing Speed
-
-| Configuration | FPS | Accuracy |
-|---------------|-----|----------|
-| Optical Flow | ~60 FPS | Good |
-| YOLO (CPU) | ~10-15 FPS | Excellent |
-| YOLO (GPU) | ~30-45 FPS | Excellent |
-| Multi-scale YOLO | ~8-12 FPS | Best |
-
-### Accuracy Metrics
-
-**Improvements with Enhanced System:**
-- **Occlusion Handling**: 60-80% improvement in ID consistency
-- **Similar Colors**: 50% reduction in ID switching
-- **Crowded Scenes**: 20-30% more vehicles detected
-
-### Hardware Requirements
-
-**Minimum:**
-- CPU: Intel i5 or equivalent
-- RAM: 8 GB
-- Storage: 2 GB for dependencies
-
-**Recommended:**
-- CPU: Intel i7 or equivalent
-- RAM: 16 GB
-- GPU: NVIDIA GTX 1060 or better
-- Storage: 5 GB (includes model weights)
-
----
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-**1. YOLO not loading**
-```bash
-pip uninstall ultralytics
-pip install ultralytics --no-cache-dir
-```
-
-**2. Video won't open**
-- Check file path
-- Try absolute path
-- Verify video format (MP4 recommended)
-
-**3. Slow processing**
-- Use `--no-display` flag
-- Lower resolution
-- Use GPU
-- Disable multi-scale detection
-
-**4. Inaccurate counting**
-- Adjust YOLO confidence (try 0.3-0.5)
-- Redraw ROI perpendicular to flow
-- Use YOLO mode instead of optical flow
-
-**5. Streamlit errors**
-```bash
-pip install --upgrade streamlit
-streamlit cache clear
-```
-
-For more issues, see [USAGE_GUIDE.md](USAGE_GUIDE.md#troubleshooting)
-
----
-
-## 🤝 Contributing
-
-This is an educational project for CPS843 - Computer Vision. Feel free to:
-- Report bugs
-- Suggest improvements
-- Fork for your own learning
-
-**Please don't:**
-- Submit pull requests (educational project)
-- Copy directly for coursework (academic integrity)
-
----
-
-## 📄 License
-
-Educational project for Toronto Metropolitan University.
-
-**Terms:**
-- ✅ Use for learning
-- ✅ Reference in your work (with citation)
-- ❌ Copy for coursework
-- ❌ Commercial use without permission
-
----
-
-## 👨‍💻 Author
-
-**Arshia Rahim**
-
-Computer Engineering (Software) Student  
-Toronto Metropolitan University
-
-- 🌐 GitHub: [@ArshiaRx](https://github.com/ArshiaRx)
-- 💼 LinkedIn: [in/arshia-rahim](https://www.linkedin.com/in/arshia-rahim)
-- 📧 Email: [Available on LinkedIn]
-
-### Course Information
-
-**CPS843 - Introduction to Computer Vision**  
-Fall 2025  
-Toronto Metropolitan University
-
-**Instructor**: [Course Instructor]
-
----
-
-## 🙏 Acknowledgments
-
-### Libraries & Frameworks
-- **OpenCV**: Computer vision operations
-- **Ultralytics**: YOLOv8 implementation
-- **Streamlit**: Web interface framework
-- **FilterPy**: Kalman filter implementation
-- **Plotly**: Interactive visualizations
-
-### References
-1. Lucas, B. D., & Kanade, T. (1981). "An iterative image registration technique"
-2. Kalman, R. E. (1960). "A New Approach to Linear Filtering"
-3. Shi, J., & Tomasi, C. (1994). "Good features to track"
-4. Redmon, J., et al. (2016). "You Only Look Once"
-5. Bewley, A., et al. (2016). "Simple Online and Realtime Tracking"
-
----
-
-## 📊 Project Stats
-
-![Lines of Code](https://img.shields.io/badge/Lines_of_Code-3500+-blue)
-![Modules](https://img.shields.io/badge/Modules-12-green)
-![Documentation](https://img.shields.io/badge/Documentation-Extensive-yellow)
-
-**Developed**: Fall 2025  
-**Language**: Python 3.8+  
-**Domain**: Computer Vision, Object Tracking, Video Analytics
-
----
-
-## 🎯 Future Enhancements
-
-- [ ] Real-time RTSP stream support
-- [ ] Vehicle type classification
-- [ ] Speed limit violation detection
-- [ ] Database integration for historical data
-- [ ] Mobile app interface
-- [ ] GPU optimization for real-time processing
-- [ ] Multi-camera tracking
-- [ ] Cloud deployment option
-
----
-
-## 📞 Contact & Support
-
-For questions or issues:
-1. Check [USAGE_GUIDE.md](USAGE_GUIDE.md)
-2. Review [THEORY.md](THEORY.md) for algorithms
-3. See [Troubleshooting](#-troubleshooting) section
-4. Contact via LinkedIn for specific queries
-
----
-
-<p align="center">
-  <b>Made with ❤️ for Computer Vision</b><br>
-  <sub>Toronto Metropolitan University | Fall 2025</sub>
-</p>
-
-<p align="center">
-  ⭐ Star this repo if you found it helpful! ⭐
-</p>
-
+*Built for CPS843 - Introduction to Computer Vision (Fall 2025)*
