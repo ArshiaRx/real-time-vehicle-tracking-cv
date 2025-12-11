@@ -4,10 +4,10 @@
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-green.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
 
-A computer vision system for tracking and counting vehicles in video footage. Built as a course project for CPS843 (Introduction to Computer Vision) at Toronto Metropolitan University.
+A real-time computer vision system for vehicle tracking and counting using either dense optical flow or YOLOv8 detection, combined with Kalman filtering for robust motion prediction. Developed as a CPS843 (Introduction to Computer Vision) project at Toronto Metropolitan University.
 
-> ⚠️ **Note**: This is an educational project developed for visualization and learning purposes. It demonstrates core computer vision concepts like optical flow, object detection, and Kalman filtering.
-
+> ⚠️ **Note**: This project is intended for academic and demonstration purposes. It showcases core computer vision concepts such as optical flow, object detection, tracking, and Kalman filtering.
+> 
 ---
 
 ## 🎯 What It Does
