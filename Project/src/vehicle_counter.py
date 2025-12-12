@@ -52,8 +52,16 @@ class VehicleCounter:
         self.crossing_animations = []  # Active crossing animations
         self.frame_time = 0  # Current frame timestamp
         self.crossing_threshold = 15.0  # Distance threshold for crossing detection (pixels)
+        self.max_roi_distance = 80.0  # Maximum distance from ROI line to consider for counting (pixels) - increased for better detection
+        self.min_movement_threshold = 3.0  # Minimum movement in pixels to consider valid - reduced for better sensitivity
         
-    def set_roi(self, roi_type, roi_points=None, roi_lines=None):
+        # Double-line counting configuration
+        self.use_double_line = False  # Enable double-line counting
+        self.double_line_spacing = 80  # Spacing between lines in pixels
+        self.min_travel_distance = 50  # Minimum distance vehicle must travel before counting
+        self.line_crossing_state = {}  # track_id -> {'line1_crossed': bool, 'line2_crossed': bool, 'entry_pos': tuple}
+        
+    def set_roi(self, roi_type, roi_points=None, roi_lines=None, use_double_line=False):
         """
         Set or update the ROI.
         
@@ -61,6 +69,7 @@ class VehicleCounter:
             roi_type: 'line' or 'polygon'
             roi_points: Points defining the ROI (legacy support)
             roi_lines: List of ROI lines for multiple lines support
+            use_double_line: Enable double-line counting (requires exactly 2 lines)
         """
         self.roi_type = roi_type
         
@@ -80,7 +89,14 @@ class VehicleCounter:
             else:
                 self.roi_lines = []
         
+        # Enable double-line counting if we have exactly 2 lines
+        if roi_type == 'line' and len(self.roi_lines) == 2 and use_double_line:
+            self.use_double_line = True
+        else:
+            self.use_double_line = False
+        
         self.tracked_objects = {}  # Reset tracking when ROI changes
+        self.line_crossing_state = {}  # Reset crossing state
     
     def _point_to_line_distance(self, point, line_start, line_end):
         """
@@ -206,8 +222,19 @@ class VehicleCounter:
                     'crossed': False,
                     'class_name': class_name,
                     'frames_since_crossing': 0,
-                    'frames_seen': 0  # Track how many frames this object has been seen
+                    'frames_seen': 0,  # Track how many frames this object has been seen
+                    'entry_position': (x, y),  # Track entry position for min travel distance
+                    'position_history': [(x, y)],  # Track position history for trajectory validation
+                    'total_movement': 0.0  # Track total movement for filtering stationary objects
                 }
+                # Initialize double-line state
+                if self.use_double_line:
+                    self.line_crossing_state[track_id] = {
+                        'line1_crossed': False,
+                        'line2_crossed': False,
+                        'entry_pos': (x, y),
+                        'crossing_direction': None
+                    }
                 # Check crossing immediately for new tracks (they might already be crossing)
                 # But only if we have history from YOLO tracks
                 if 'history' in track and len(track.get('history', [])) > 1:
@@ -242,10 +269,26 @@ class VehicleCounter:
             obj['current_position'] = (x, y)
             obj['class_name'] = class_name  # Update in case it changes
             
+            # Track position history for trajectory validation (keep last 10 positions)
+            if 'position_history' not in obj:
+                obj['position_history'] = []
+            obj['position_history'].append((x, y))
+            if len(obj['position_history']) > 10:
+                obj['position_history'].pop(0)
+            
+            # Track total movement for filtering stationary objects
+            if 'total_movement' not in obj:
+                obj['total_movement'] = 0.0
+            obj['total_movement'] += movement
+            
             # Track how many frames this object has been seen
             if 'frames_seen' not in obj:
                 obj['frames_seen'] = 0
             obj['frames_seen'] += 1
+            
+            # Filter out stationary objects (require minimum total movement over multiple frames)
+            if obj['frames_seen'] >= 5 and obj['total_movement'] < self.min_movement_threshold * 3:
+                return  # Object hasn't moved enough, likely stationary
             
             # Increment frames since crossing (for potential reset logic)
             if 'frames_since_crossing' not in obj:
@@ -257,12 +300,18 @@ class VehicleCounter:
                     obj['crossed'] = False
                     obj['frames_since_crossing'] = 0
             
-            # Check for crossing (always check, not just when not crossed)
-            # This ensures we detect crossings even if previous check missed it
-            if not obj['crossed']:
-                if self.roi_type == 'line':
+            # Check for crossing
+            # In double-line mode, always check (both lines count independently)
+            # In single-line mode, only check if not already crossed
+            if self.roi_type == 'line':
+                if self.use_double_line and len(self.roi_lines) == 2:
+                    # Double-line mode: always check both lines independently
                     self._check_line_crossing(obj, track_id, movement)
-                elif self.roi_type == 'polygon' and len(self.roi_points) >= 3:
+                elif not obj['crossed']:
+                    # Single-line mode: only check if not already crossed
+                    self._check_line_crossing(obj, track_id, movement)
+            elif self.roi_type == 'polygon' and len(self.roi_points) >= 3:
+                if not obj['crossed']:
                     self._check_polygon_crossing(obj, track_id)
         
         # Remove tracks that are no longer active
@@ -273,10 +322,29 @@ class VehicleCounter:
         }
     
     def _check_line_crossing(self, obj, track_id, movement=0):
-        """Check if object crossed any of the ROI lines. Counts only once (first line crossed)."""
+        """Check if object crossed any of the ROI lines. Supports double-line counting for accuracy."""
         prev_pos = obj['previous_position']
         curr_pos = obj['current_position']
         
+        # Enforce strict ROI boundaries - only check if vehicle is near the line
+        min_dist_to_any_line = float('inf')
+        for line in self.roi_lines:
+            dist = abs(self._point_to_line_distance(curr_pos, line[0], line[1]))
+            min_dist_to_any_line = min(min_dist_to_any_line, dist)
+        
+        # Skip if vehicle is too far from any ROI line
+        if min_dist_to_any_line > self.max_roi_distance:
+            return
+        
+        # Require minimum movement to avoid false positives from stationary objects
+        if movement < self.min_movement_threshold:
+            return
+        
+        # Double-line counting mode
+        if self.use_double_line and len(self.roi_lines) == 2:
+            return self._check_double_line_crossing(obj, track_id, movement)
+        
+        # Single-line counting (original logic)
         # Check all lines, but count only once (first line crossed)
         for line_index, line in enumerate(self.roi_lines):
             line_start = line[0]
@@ -285,6 +353,11 @@ class VehicleCounter:
             # Calculate signed distances
             prev_dist = self._point_to_line_distance(prev_pos, line_start, line_end)
             curr_dist = self._point_to_line_distance(curr_pos, line_start, line_end)
+            
+            # Additional check: ensure vehicle is actually near this specific line
+            dist_to_this_line = abs(curr_dist)
+            if dist_to_this_line > self.max_roi_distance:
+                continue  # Skip this line, check next
             
             # Check if crossed (sign change) - primary detection method
             crossed = False
@@ -370,6 +443,134 @@ class VehicleCounter:
                 # Only count once, so break after first crossing detected
                 break
     
+    def _check_double_line_crossing(self, obj, track_id, movement=0):
+        """Check if object crossed either line - count once total, track which line was crossed."""
+        prev_pos = obj['previous_position']
+        curr_pos = obj['current_position']
+        
+        # Require minimum movement to avoid false positives
+        if movement < self.min_movement_threshold:
+            return
+        
+        # If vehicle already crossed any line, don't count again (prevent double counting)
+        if obj.get('crossed', False):
+            return
+        
+        # Initialize state for this track if needed
+        if track_id not in self.line_crossing_state:
+            self.line_crossing_state[track_id] = {
+                'line0_crossed': False,  # Track if line 0 has been crossed
+                'line1_crossed': False,  # Track if line 1 has been crossed
+            }
+        
+        state = self.line_crossing_state[track_id]
+        
+        # Ensure state keys exist
+        if 'line0_crossed' not in state:
+            state['line0_crossed'] = False
+        if 'line1_crossed' not in state:
+            state['line1_crossed'] = False
+        
+        line0 = self.roi_lines[0]
+        line1 = self.roi_lines[1]
+        
+        # Check crossing of Line 0 first
+        if not state['line0_crossed']:
+            prev_dist_0 = self._point_to_line_distance(prev_pos, line0[0], line0[1])
+            curr_dist_0 = self._point_to_line_distance(curr_pos, line0[0], line0[1])
+            dist_to_line0 = abs(curr_dist_0)
+            
+            # Check if vehicle is near line 0 and has crossed it
+            if dist_to_line0 <= self.max_roi_distance:
+                if prev_dist_0 * curr_dist_0 < 0:  # Sign change = crossed line
+                    # Determine direction based on crossing
+                    if prev_dist_0 > 0 and curr_dist_0 < 0:
+                        direction = 'down'
+                    else:
+                        direction = 'up'
+                    
+                    # Count on Line 0 and mark as globally crossed
+                    state['line0_crossed'] = True
+                    obj['crossed'] = True  # Global flag - prevents counting on other lines
+                    
+                    if direction == 'down':
+                        self.count_down += 1
+                    else:
+                        self.count_up += 1
+                    
+                    self.total_count += 1
+                    obj['crossed_line_index'] = 0
+                    
+                    crossing_event = {
+                        'track_id': track_id,
+                        'direction': direction,
+                        'position': curr_pos,
+                        'timestamp': time.time(),
+                        'class_name': obj.get('class_name', ''),
+                        'line_index': 0
+                    }
+                    
+                    self.crossing_history.append(crossing_event)
+                    self.recent_crossings.append(crossing_event)
+                    
+                    self.crossing_animations.append({
+                        'position': curr_pos,
+                        'direction': direction,
+                        'start_time': time.time(),
+                        'duration': 1.0,
+                        'track_id': track_id,
+                        'line_index': 0
+                    })
+                    return  # Exit after counting on first line
+        
+        # Check crossing of Line 1 only if Line 0 wasn't crossed
+        if not state['line1_crossed'] and not obj.get('crossed', False):
+            prev_dist_1 = self._point_to_line_distance(prev_pos, line1[0], line1[1])
+            curr_dist_1 = self._point_to_line_distance(curr_pos, line1[0], line1[1])
+            dist_to_line1 = abs(curr_dist_1)
+            
+            # Check if vehicle is near line 1 and has crossed it
+            if dist_to_line1 <= self.max_roi_distance:
+                if prev_dist_1 * curr_dist_1 < 0:  # Sign change = crossed line
+                    # Determine direction based on crossing
+                    if prev_dist_1 > 0 and curr_dist_1 < 0:
+                        direction = 'down'
+                    else:
+                        direction = 'up'
+                    
+                    # Count on Line 1 and mark as globally crossed
+                    state['line1_crossed'] = True
+                    obj['crossed'] = True  # Global flag - prevents counting on other lines
+                    
+                    if direction == 'down':
+                        self.count_down += 1
+                    else:
+                        self.count_up += 1
+                    
+                    self.total_count += 1
+                    obj['crossed_line_index'] = 1
+                    
+                    crossing_event = {
+                        'track_id': track_id,
+                        'direction': direction,
+                        'position': curr_pos,
+                        'timestamp': time.time(),
+                        'class_name': obj.get('class_name', ''),
+                        'line_index': 1
+                    }
+                    
+                    self.crossing_history.append(crossing_event)
+                    self.recent_crossings.append(crossing_event)
+                    
+                    self.crossing_animations.append({
+                        'position': curr_pos,
+                        'direction': direction,
+                        'start_time': time.time(),
+                        'duration': 1.0,
+                        'track_id': track_id,
+                        'line_index': 1
+                    })
+    
     def _check_polygon_crossing(self, obj, track_id):
         """Check if object entered/exited the polygon ROI."""
         prev_pos = obj['previous_position']
@@ -452,11 +653,12 @@ class VehicleCounter:
         if per_line and self.roi_type == 'line' and len(self.roi_lines) > 1:
             line_counts = {}
             for line_index in range(len(self.roi_lines)):
+                # Filter crossings by line_index - each line counts independently
                 line_crossings = [c for c in self.crossing_history if c.get('line_index') == line_index]
                 line_counts[f'line_{line_index}'] = {
                     'total': len(line_crossings),
-                    'up': len([c for c in line_crossings if c['direction'] == 'up']),
-                    'down': len([c for c in line_crossings if c['direction'] == 'down'])
+                    'up': len([c for c in line_crossings if c.get('direction') == 'up']),
+                    'down': len([c for c in line_crossings if c.get('direction') == 'down'])
                 }
             counts['per_line'] = line_counts
         
@@ -556,4 +758,5 @@ class VehicleCounter:
         self.crossing_history = []
         self.recent_crossings = []
         self.crossing_animations = []
+        self.line_crossing_state = {}
 

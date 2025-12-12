@@ -34,7 +34,7 @@ class VideoProcessor:
         # Initialize YOLO detector if requested
         if use_yolo:
             self.yolo_detector = YOLODetector(
-                model_size='n', 
+                model_size='s',  # Use 's' (small) for better accuracy
                 confidence_threshold=yolo_confidence,
                 min_box_size=min_box_size
             )
@@ -89,18 +89,21 @@ class VideoProcessor:
             annotated_frame = frame.copy()
             
             # Draw ROI
+            use_double_line = getattr(self.vehicle_counter, 'use_double_line', False)
             if self.vehicle_counter.roi_type == 'line' and self.vehicle_counter.roi_lines:
                 annotated_frame = draw_roi(
                     annotated_frame, 
                     roi_points=self.vehicle_counter.roi_points,
                     roi_lines=self.vehicle_counter.roi_lines,
-                    roi_type=self.vehicle_counter.roi_type
+                    roi_type=self.vehicle_counter.roi_type,
+                    use_double_line=use_double_line
                 )
             elif self.vehicle_counter.roi_points:
                 annotated_frame = draw_roi(
                     annotated_frame, 
                     roi_points=self.vehicle_counter.roi_points,
-                    roi_type=self.vehicle_counter.roi_type
+                    roi_type=self.vehicle_counter.roi_type,
+                    use_double_line=use_double_line
                 )
             
             # Draw YOLO tracks (with display_mode if set)
@@ -166,18 +169,21 @@ class VideoProcessor:
             annotated_frame = frame.copy()
             
             # Draw ROI
+            use_double_line = getattr(self.vehicle_counter, 'use_double_line', False)
             if self.vehicle_counter.roi_type == 'line' and self.vehicle_counter.roi_lines:
                 annotated_frame = draw_roi(
                     annotated_frame, 
                     roi_points=self.vehicle_counter.roi_points,
                     roi_lines=self.vehicle_counter.roi_lines,
-                    roi_type=self.vehicle_counter.roi_type
+                    roi_type=self.vehicle_counter.roi_type,
+                    use_double_line=use_double_line
                 )
             elif self.vehicle_counter.roi_points:
                 annotated_frame = draw_roi(
                     annotated_frame, 
                     roi_points=self.vehicle_counter.roi_points,
-                    roi_type=self.vehicle_counter.roi_type
+                    roi_type=self.vehicle_counter.roi_type,
+                    use_double_line=use_double_line
                 )
             
             # Draw tracks (with display_mode if set)

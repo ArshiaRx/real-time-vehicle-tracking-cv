@@ -16,26 +16,11 @@ import sys
 from typing import Optional, Tuple
 import imageio
 
-# Try to import drawable canvas, fallback to None if not available
-try:
-    from streamlit_drawable_canvas import st_canvas
-    CANVAS_AVAILABLE = True
-except ImportError:
-    st_canvas = None
-    CANVAS_AVAILABLE = False
-
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    Image = None
-    PIL_AVAILABLE = False
-
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.video_processor import VideoProcessor
-from src.utils import ROISelector, draw_roi
+from src.utils import ROISelector
 
 # Page configuration
 st.set_page_config(
@@ -45,55 +30,1055 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS - Enhanced Professional Design
 st.markdown("""
 <style>
+    /* Import Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    
+    /* Global Styles */
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    
+    /* Enhanced Neon Glow Animations - Brighter & Sharper */
+    @keyframes neon-pulse {
+        0%, 100% { 
+            text-shadow: 0 0 5px #B794F6, 
+                         0 0 10px #B794F6, 
+                         0 0 15px #B794F6, 
+                         0 0 20px #9D8DF1,
+                         0 0 30px #9D8DF1,
+                         0 0 40px #7C6FD8;
+            filter: brightness(1) drop-shadow(0 0 5px #B794F6);
+        }
+        50% { 
+            text-shadow: 0 0 10px #B794F6, 
+                         0 0 20px #B794F6, 
+                         0 0 30px #9D8DF1,
+                         0 0 40px #9D8DF1,
+                         0 0 50px #7C6FD8,
+                         0 0 60px #5B51B8;
+            filter: brightness(1.3) drop-shadow(0 0 10px #B794F6);
+        }
+    }
+    
+    @keyframes neon-breathe {
+        0%, 100% { 
+            opacity: 0.9; 
+            filter: brightness(1);
+        }
+        50% { 
+            opacity: 1; 
+            filter: brightness(1.4);
+        }
+    }
+    
+    @keyframes neon-flow {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    @keyframes neon-shimmer {
+        0% { background-position: -200% center; }
+        100% { background-position: 200% center; }
+    }
+    
+    @keyframes neon-border-pulse {
+        0%, 100% { 
+            box-shadow: 0 0 5px rgba(183, 148, 246, 0.9), 
+                        0 0 10px rgba(183, 148, 246, 0.7), 
+                        0 0 15px rgba(157, 141, 241, 0.6),
+                        0 0 20px rgba(157, 141, 241, 0.5),
+                        0 0 30px rgba(157, 141, 241, 0.4),
+                        inset 0 0 10px rgba(183, 148, 246, 0.3),
+                        inset 0 0 20px rgba(183, 148, 246, 0.2);
+        }
+        50% { 
+            box-shadow: 0 0 10px rgba(183, 148, 246, 1), 
+                        0 0 20px rgba(183, 148, 246, 0.8), 
+                        0 0 30px rgba(157, 141, 241, 0.7),
+                        0 0 40px rgba(157, 141, 241, 0.6),
+                        0 0 50px rgba(157, 141, 241, 0.5),
+                        inset 0 0 15px rgba(183, 148, 246, 0.4),
+                        inset 0 0 30px rgba(183, 148, 246, 0.3);
+        }
+    }
+    
+    @keyframes neon-green-pulse {
+        0%, 100% { 
+            box-shadow: 0 0 5px rgba(46, 204, 113, 0.9), 
+                        0 0 10px rgba(46, 204, 113, 0.7), 
+                        0 0 15px rgba(46, 204, 113, 0.6),
+                        0 0 20px rgba(46, 204, 113, 0.5),
+                        0 0 30px rgba(46, 204, 113, 0.4),
+                        inset 0 0 10px rgba(46, 204, 113, 0.3);
+        }
+        50% { 
+            box-shadow: 0 0 10px rgba(46, 204, 113, 1), 
+                        0 0 20px rgba(46, 204, 113, 0.8), 
+                        0 0 30px rgba(46, 204, 113, 0.7),
+                        0 0 40px rgba(46, 204, 113, 0.6),
+                        0 0 50px rgba(46, 204, 113, 0.5),
+                        inset 0 0 15px rgba(46, 204, 113, 0.4);
+        }
+    }
+    
+    @keyframes neon-red-pulse {
+        0%, 100% { 
+            box-shadow: 0 0 5px rgba(231, 76, 60, 0.9), 
+                        0 0 10px rgba(231, 76, 60, 0.7), 
+                        0 0 15px rgba(231, 76, 60, 0.6),
+                        0 0 20px rgba(231, 76, 60, 0.5),
+                        0 0 30px rgba(231, 76, 60, 0.4),
+                        inset 0 0 10px rgba(231, 76, 60, 0.3);
+        }
+        50% { 
+            box-shadow: 0 0 10px rgba(231, 76, 60, 1), 
+                        0 0 20px rgba(231, 76, 60, 0.8), 
+                        0 0 30px rgba(231, 76, 60, 0.7),
+                        0 0 40px rgba(231, 76, 60, 0.6),
+                        0 0 50px rgba(231, 76, 60, 0.5),
+                        inset 0 0 15px rgba(231, 76, 60, 0.4);
+        }
+    }
+    
+    /* Main Header with Enhanced Bright Neon Glow */
     .main-header {
         font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
+        font-weight: 800;
+        background: linear-gradient(135deg, #B794F6 0%, #9D8DF1 30%, #7C6FD8 60%, #5B51B8 100%);
+        background-size: 200% 200%;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 0.75rem;
+        letter-spacing: 0.02em;
+        animation: fadeInDown 0.8s ease-out, neon-pulse 2.5s ease-in-out infinite, neon-flow 4s ease infinite;
+        filter: drop-shadow(0 0 5px #B794F6) drop-shadow(0 0 10px #9D8DF1) drop-shadow(0 0 15px #7C6FD8);
+        text-shadow: 0 0 5px #B794F6, 
+                     0 0 10px #B794F6, 
+                     0 0 15px #9D8DF1,
+                     0 0 20px #9D8DF1,
+                     0 0 30px #7C6FD8;
     }
+    
+    /* Subtitle with Enhanced Neon Glow */
+    .subtitle {
+        text-align: center;
+        color: var(--text-color);
+        opacity: 0.85;
+        font-size: 1.1rem;
+        margin-bottom: 1.5rem;
+        line-height: 1.6;
+        animation: fadeIn 1s ease-out;
+        text-shadow: 0 0 8px rgba(183, 148, 246, 0.6), 
+                     0 0 15px rgba(157, 141, 241, 0.5), 
+                     0 0 25px rgba(157, 141, 241, 0.4);
+    }
+    
+    /* Enhanced Metric Cards with Sharp Neon Glow */
     .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-    }
-    /* Enhanced UI Styling */
-    .stSidebar {
-        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
-    }
-    .stButton > button {
-        border-radius: 8px;
+        background: linear-gradient(135deg, var(--secondary-background-color) 0%, rgba(183, 148, 246, 0.08) 100%);
+        padding: 1.5rem;
+        border-radius: 0.75rem;
+        border: 2px solid rgba(183, 148, 246, 0.5);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.8), 
+                    0 0 10px rgba(183, 148, 246, 0.6), 
+                    0 0 15px rgba(157, 141, 241, 0.5),
+                    0 0 20px rgba(157, 141, 241, 0.4),
+                    0 0 30px rgba(157, 141, 241, 0.3),
+                    inset 0 0 10px rgba(183, 148, 246, 0.2),
+                    0 4px 6px rgba(0, 0, 0, 0.1);
         transition: all 0.3s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        backdrop-filter: blur(10px);
     }
-    .stButton > button:hover {
+    
+    .metric-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 0 10px rgba(183, 148, 246, 1), 
+                    0 0 20px rgba(183, 148, 246, 0.8), 
+                    0 0 30px rgba(157, 141, 241, 0.7),
+                    0 0 40px rgba(157, 141, 241, 0.6),
+                    0 0 50px rgba(157, 141, 241, 0.5),
+                    inset 0 0 15px rgba(183, 148, 246, 0.3),
+                    0 8px 12px rgba(0, 0, 0, 0.15);
+        border-color: rgba(183, 148, 246, 0.8);
     }
-    .stExpander {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
+    
+    /* Info Cards with Sharp Neon Glow */
+    .info-card {
+        background: linear-gradient(135deg, rgba(183, 148, 246, 0.12) 0%, rgba(157, 141, 241, 0.06) 100%);
+        padding: 1.25rem;
+        border-radius: 0.75rem;
+        border: 2px solid rgba(183, 148, 246, 0.5);
+        margin: 0.75rem 0;
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.7), 
+                    0 0 10px rgba(183, 148, 246, 0.5), 
+                    0 0 15px rgba(157, 141, 241, 0.4),
+                    0 0 20px rgba(157, 141, 241, 0.3),
+                    inset 0 0 8px rgba(183, 148, 246, 0.2),
+                    0 2px 8px rgba(0, 0, 0, 0.1);
+        animation: slideInLeft 0.6s ease-out;
+        transition: all 0.3s ease;
+    }
+    
+    .info-card:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 0.9), 
+                    0 0 20px rgba(183, 148, 246, 0.7), 
+                    0 0 30px rgba(157, 141, 241, 0.6),
+                    0 0 40px rgba(157, 141, 241, 0.5),
+                    inset 0 0 12px rgba(183, 148, 246, 0.3),
+                    0 4px 12px rgba(0, 0, 0, 0.15);
+        border-color: rgba(183, 148, 246, 0.8);
+    }
+    
+    /* Feature Badge with Sharp Neon Glow */
+    .feature-badge {
+        display: inline-block;
+        padding: 0.4rem 0.8rem;
+        background: linear-gradient(135deg, #B794F6 0%, #9D8DF1 50%, #7C6FD8 100%);
+        background-size: 200% 200%;
+        color: white;
+        border-radius: 2rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin: 0.2rem;
+        border: 1px solid rgba(183, 148, 246, 0.6);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.9), 
+                    0 0 10px rgba(183, 148, 246, 0.7), 
+                    0 0 15px rgba(157, 141, 241, 0.6),
+                    0 0 20px rgba(157, 141, 241, 0.5),
+                    inset 0 0 8px rgba(183, 148, 246, 0.3),
+                    0 2px 8px rgba(0, 0, 0, 0.2);
+        animation: fadeIn 0.8s ease-out, neon-border-pulse 2.5s ease-in-out infinite, neon-flow 3s ease infinite;
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.8), 
+                     0 0 10px rgba(255, 255, 255, 0.5);
+        transition: all 0.3s ease;
+    }
+    
+    .feature-badge:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 1), 
+                    0 0 20px rgba(183, 148, 246, 0.8), 
+                    0 0 30px rgba(157, 141, 241, 0.7),
+                    0 0 40px rgba(157, 141, 241, 0.6),
+                    inset 0 0 12px rgba(183, 148, 246, 0.4),
+                    0 4px 12px rgba(0, 0, 0, 0.3);
+        transform: translateY(-2px) scale(1.05);
+        filter: brightness(1.2);
+    }
+    
+    /* Stats Container with Sharp Neon Glow */
+    .stats-container {
+        background: linear-gradient(135deg, rgba(183, 148, 246, 0.1) 0%, rgba(157, 141, 241, 0.04) 100%);
+        padding: 1.5rem;
+        border-radius: 0.75rem;
+        border: 2px solid rgba(183, 148, 246, 0.5);
+        margin: 0.75rem 0;
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.7), 
+                    0 0 10px rgba(183, 148, 246, 0.5), 
+                    0 0 15px rgba(157, 141, 241, 0.4),
+                    0 0 20px rgba(157, 141, 241, 0.3),
+                    inset 0 0 10px rgba(183, 148, 246, 0.2),
+                    0 4px 12px rgba(0, 0, 0, 0.08);
+        transition: all 0.3s ease;
+    }
+    
+    .stats-container:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 0.9), 
+                    0 0 20px rgba(183, 148, 246, 0.7), 
+                    0 0 30px rgba(157, 141, 241, 0.6),
+                    0 0 40px rgba(157, 141, 241, 0.5),
+                    inset 0 0 15px rgba(183, 148, 246, 0.3),
+                    0 6px 16px rgba(0, 0, 0, 0.12);
+        border-color: rgba(183, 148, 246, 0.8);
+    }
+    
+    /* Enhanced Sidebar with Sharp Neon Glow */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(183, 148, 246, 0.1) 0%, rgba(157, 141, 241, 0.04) 100%);
+        border-right: 3px solid rgba(183, 148, 246, 0.6);
+        box-shadow: 0 0 15px rgba(183, 148, 246, 0.4), 
+                    0 0 30px rgba(157, 141, 241, 0.3), 
+                    inset -3px 0 25px rgba(183, 148, 246, 0.2);
+        transition: all 0.3s ease;
+    }
+    
+    section[data-testid="stSidebar"] > div {
+        padding-top: 1.5rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    /* Sidebar Toggle Button Styling */
+    button[key="sidebar_toggle"] {
+        background: linear-gradient(135deg, #9D8DF1 0%, #7C6FD8 100%) !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 45px !important;
+        height: 45px !important;
+        min-width: 45px !important;
+        padding: 0 !important;
+        box-shadow: 0 0 15px rgba(157, 141, 241, 0.6), 
+                    0 0 30px rgba(157, 141, 241, 0.4),
+                    0 4px 12px rgba(0, 0, 0, 0.3) !important;
+        font-size: 1.2rem !important;
+        color: white !important;
+        transition: all 0.3s ease !important;
+        animation: neon-border-pulse 3s ease-in-out infinite !important;
+        text-transform: none !important;
+        letter-spacing: 0 !important;
+    }
+    
+    button[key="sidebar_toggle"]:hover {
+        box-shadow: 0 0 20px rgba(157, 141, 241, 0.8), 
+                    0 0 40px rgba(157, 141, 241, 0.6),
+                    0 6px 16px rgba(0, 0, 0, 0.4) !important;
+        transform: scale(1.1) !important;
+    }
+    
+    /* Collapsed Sidebar */
+    .sidebar-collapsed section[data-testid="stSidebar"] {
+        width: 0 !important;
+        min-width: 0 !important;
+        overflow: hidden;
+        transition: width 0.3s ease;
+    }
+    
+    .sidebar-collapsed section[data-testid="stSidebar"] > div {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+    }
+    
+    /* Professional Spacing System */
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 1.5rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+        max-width: 100%;
+    }
+    
+    /* Consistent Column Spacing */
+    .stColumn {
+        padding: 0.75rem;
+    }
+    
+    /* Typography Spacing Hierarchy */
+    h1 {
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+        font-size: 2.5rem;
+        line-height: 1.2;
+    }
+    
+    h2 {
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+        font-size: 1.75rem;
+        line-height: 1.3;
+    }
+    
+    h3 {
+        margin-top: 1.25rem;
+        margin-bottom: 0.75rem;
+        font-size: 1.25rem;
+        line-height: 1.4;
+    }
+    
+    h4 {
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        font-size: 1.1rem;
+        line-height: 1.5;
+    }
+    
+    /* Consistent Section Spacing */
+    .element-container {
+        margin-bottom: 1rem;
+    }
+    
+    /* Processing Status Spacing */
+    .processing-status {
+        margin: 1rem 0;
+        padding: 1rem;
+    }
+    
+    /* Chart Container Spacing */
+    .chart-container {
+        margin: 1rem 0;
+    }
+    
+    /* Info Card Spacing */
+    .info-card {
+        margin: 1rem 0;
+    }
+    
+    /* Stats Container Spacing */
+    .stats-container {
+        margin: 1rem 0;
+    }
+    
+    /* Sidebar Headers with Sharp Neon Glow */
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3 {
+        color: var(--text-color);
+        text-shadow: 0 0 8px rgba(183, 148, 246, 0.6), 
+                     0 0 15px rgba(157, 141, 241, 0.5), 
+                     0 0 25px rgba(157, 141, 241, 0.4);
+        border-bottom: 2px solid rgba(183, 148, 246, 0.5);
+        padding-bottom: 0.5rem;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 0 rgba(183, 148, 246, 0.3);
+        font-weight: 700;
+    }
+    
+    section[data-testid="stSidebar"] h1:first-child,
+    section[data-testid="stSidebar"] h2:first-child,
+    section[data-testid="stSidebar"] h3:first-child {
+        margin-top: 0;
+    }
+    
+    /* Sidebar Input Grouping */
+    section[data-testid="stSidebar"] .element-container {
+        margin-bottom: 1rem;
+    }
+    
+    section[data-testid="stSidebar"] .stSubheader {
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Sidebar Radio Buttons with Sharp Neon Glow */
+    section[data-testid="stSidebar"] label[data-baseweb="radio"] {
+        color: var(--text-color);
         margin-bottom: 0.5rem;
     }
-    .stSlider {
-        padding: 0.5rem 0;
+    
+    section[data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] {
+        box-shadow: 0 0 8px rgba(183, 148, 246, 0.8), 
+                    0 0 15px rgba(183, 148, 246, 0.6), 
+                    0 0 25px rgba(157, 141, 241, 0.5);
     }
-    h3 {
-        color: #2c3e50;
-        border-bottom: 2px solid #3498db;
-        padding-bottom: 0.5rem;
+    
+    /* Sidebar Checkboxes with Sharp Neon Glow */
+    section[data-testid="stSidebar"] [data-baseweb="checkbox"] [aria-checked="true"] {
+        box-shadow: 0 0 8px rgba(183, 148, 246, 0.8), 
+                    0 0 15px rgba(183, 148, 246, 0.6), 
+                    0 0 25px rgba(157, 141, 241, 0.5);
     }
-    /* Canvas container styling */
-    .canvas-container {
-        border: 2px solid #3498db;
-        border-radius: 8px;
+    
+    /* Sidebar Sliders with Sharp Neon Glow */
+    section[data-testid="stSidebar"] [data-baseweb="slider"] {
+        margin: 0.75rem 0;
+    }
+    
+    section[data-testid="stSidebar"] [data-baseweb="slider"] [role="slider"] {
+        box-shadow: 0 0 8px rgba(183, 148, 246, 0.8), 
+                    0 0 15px rgba(183, 148, 246, 0.6), 
+                    0 0 25px rgba(157, 141, 241, 0.5);
+    }
+    
+    /* Sidebar Selectbox/Dropdown with Sharp Neon Glow */
+    section[data-testid="stSidebar"] [data-baseweb="select"] {
+        border: 1px solid rgba(183, 148, 246, 0.5);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.4), 
+                    0 0 10px rgba(157, 141, 241, 0.3);
+        margin-bottom: 0.75rem;
+    }
+    
+    section[data-testid="stSidebar"] [data-baseweb="select"]:focus,
+    section[data-testid="stSidebar"] [data-baseweb="select"]:hover {
+        border-color: rgba(183, 148, 246, 0.8);
+        box-shadow: 0 0 10px rgba(183, 148, 246, 0.6), 
+                    0 0 20px rgba(183, 148, 246, 0.5), 
+                    0 0 30px rgba(157, 141, 241, 0.4);
+    }
+    
+    /* Sidebar Section Separators with Neon Glow */
+    section[data-testid="stSidebar"] hr {
+        border: none;
+        border-top: 2px solid rgba(183, 148, 246, 0.4);
+        box-shadow: 0 0 8px rgba(183, 148, 246, 0.5), 
+                    0 0 15px rgba(157, 141, 241, 0.4);
+        margin: 1.5rem 0;
+    }
+    
+    /* Sidebar Expanders with Sharp Neon Glow */
+    section[data-testid="stSidebar"] .streamlit-expanderHeader {
+        background: linear-gradient(135deg, rgba(183, 148, 246, 0.12) 0%, rgba(157, 141, 241, 0.06) 100%);
+        border: 1px solid rgba(183, 148, 246, 0.4);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.4), 
+                    0 0 10px rgba(157, 141, 241, 0.3);
+        margin-bottom: 0.5rem;
+    }
+    
+    section[data-testid="stSidebar"] .streamlit-expanderHeader:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 0.6), 
+                    0 0 20px rgba(183, 148, 246, 0.5), 
+                    0 0 30px rgba(157, 141, 241, 0.4);
+        border-color: rgba(183, 148, 246, 0.7);
+    }
+    
+    /* Sidebar Input Grouping */
+    section[data-testid="stSidebar"] .element-container {
+        margin-bottom: 1rem;
+    }
+    
+    section[data-testid="stSidebar"] .stSubheader {
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Button Enhancements with Sharp Neon Glow */
+    .stButton > button {
+        font-weight: 600;
+        border-radius: 0.75rem;
+        padding: 0.75rem 2rem;
+        border: 2px solid rgba(183, 148, 246, 0.6);
+        transition: all 0.3s ease;
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.9), 
+                    0 0 10px rgba(183, 148, 246, 0.7), 
+                    0 0 15px rgba(157, 141, 241, 0.6),
+                    0 0 20px rgba(157, 141, 241, 0.5),
+                    inset 0 0 8px rgba(183, 148, 246, 0.3),
+                    0 4px 12px rgba(0, 0, 0, 0.2);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 0.9rem;
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.8), 
+                     0 0 10px rgba(255, 255, 255, 0.5);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stButton > button::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        animation: neon-shimmer 3s infinite;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 10px rgba(183, 148, 246, 1), 
+                    0 0 20px rgba(183, 148, 246, 0.8), 
+                    0 0 30px rgba(157, 141, 241, 0.7),
+                    0 0 40px rgba(157, 141, 241, 0.6),
+                    inset 0 0 12px rgba(183, 148, 246, 0.4),
+                    0 6px 20px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 0 10px rgba(255, 255, 255, 1), 
+                     0 0 20px rgba(255, 255, 255, 0.8);
+        border-color: rgba(183, 148, 246, 0.9);
+        filter: brightness(1.15);
+    }
+    
+    /* Download Button with Sharp Green Neon Glow */
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+        color: white;
+        font-weight: 600;
+        border-radius: 0.75rem;
+        border: 2px solid rgba(46, 204, 113, 0.7);
+        box-shadow: 0 0 5px rgba(46, 204, 113, 0.9), 
+                    0 0 10px rgba(46, 204, 113, 0.7), 
+                    0 0 15px rgba(46, 204, 113, 0.6),
+                    0 0 20px rgba(46, 204, 113, 0.5),
+                    inset 0 0 8px rgba(46, 204, 113, 0.3),
+                    0 4px 12px rgba(0, 0, 0, 0.2);
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.8), 
+                     0 0 10px rgba(255, 255, 255, 0.5);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stDownloadButton > button::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        animation: neon-shimmer 3s infinite;
+    }
+    
+    .stDownloadButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 10px rgba(46, 204, 113, 1), 
+                    0 0 20px rgba(46, 204, 113, 0.8), 
+                    0 0 30px rgba(46, 204, 113, 0.7),
+                    0 0 40px rgba(46, 204, 113, 0.6),
+                    inset 0 0 12px rgba(46, 204, 113, 0.4),
+                    0 6px 20px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 0 10px rgba(255, 255, 255, 1), 
+                     0 0 20px rgba(255, 255, 255, 0.8);
+        border-color: rgba(46, 204, 113, 0.9);
+        filter: brightness(1.15);
+    }
+    
+    /* Progress Bar */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #9D8DF1 0%, #7C6FD8 50%, #5B51B8 100%);
+        border-radius: 1rem;
+        height: 1rem;
+        box-shadow: 0 2px 8px rgba(157, 141, 241, 0.3);
+    }
+    
+    /* Live Counter Display with Better Spacing */
+    .live-counter-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1rem;
+        margin: 1.5rem 0;
+        justify-items: center;
+        max-width: 100%;
+    }
+    
+    .live-counter {
+        flex: 1;
+        min-width: 160px;
+        max-width: 220px;
+        padding: 1rem 0.75rem;
+        border-radius: 0.75rem;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+    
+    .live-counter::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        animation: pulse 2s infinite;
+        box-shadow: 0 0 10px currentColor;
+    }
+    
+    .live-counter.up {
+        background: linear-gradient(135deg, rgba(46, 204, 113, 0.18) 0%, rgba(46, 204, 113, 0.08) 100%);
+        border: 2px solid rgba(46, 204, 113, 0.7);
+        box-shadow: 0 0 5px rgba(46, 204, 113, 0.9), 
+                    0 0 10px rgba(46, 204, 113, 0.7), 
+                    0 0 15px rgba(46, 204, 113, 0.6),
+                    0 0 20px rgba(46, 204, 113, 0.5),
+                    0 0 30px rgba(46, 204, 113, 0.4),
+                    inset 0 0 10px rgba(46, 204, 113, 0.3),
+                    0 2px 8px rgba(0, 0, 0, 0.12);
+        animation: neon-green-pulse 2.5s ease-in-out infinite, neon-breathe 3s ease-in-out infinite;
+    }
+    
+    .live-counter.up::before {
+        background: linear-gradient(90deg, #2ecc71, #27ae60);
+        box-shadow: 0 0 10px #2ecc71, 0 0 20px #2ecc71, 0 0 30px rgba(46, 204, 113, 0.6);
+    }
+    
+    .live-counter.up:hover {
+        box-shadow: 0 0 10px rgba(46, 204, 113, 1), 
+                    0 0 20px rgba(46, 204, 113, 0.8), 
+                    0 0 30px rgba(46, 204, 113, 0.7),
+                    0 0 40px rgba(46, 204, 113, 0.6),
+                    0 0 50px rgba(46, 204, 113, 0.5),
+                    inset 0 0 15px rgba(46, 204, 113, 0.4),
+                    0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+        filter: brightness(1.2);
+    }
+    
+    .live-counter.down {
+        background: linear-gradient(135deg, rgba(231, 76, 60, 0.18) 0%, rgba(231, 76, 60, 0.08) 100%);
+        border: 2px solid rgba(231, 76, 60, 0.7);
+        box-shadow: 0 0 5px rgba(231, 76, 60, 0.9), 
+                    0 0 10px rgba(231, 76, 60, 0.7), 
+                    0 0 15px rgba(231, 76, 60, 0.6),
+                    0 0 20px rgba(231, 76, 60, 0.5),
+                    0 0 30px rgba(231, 76, 60, 0.4),
+                    inset 0 0 10px rgba(231, 76, 60, 0.3),
+                    0 2px 8px rgba(0, 0, 0, 0.12);
+        animation: neon-red-pulse 2.5s ease-in-out infinite, neon-breathe 3s ease-in-out infinite;
+    }
+    
+    .live-counter.down::before {
+        background: linear-gradient(90deg, #e74c3c, #c0392b);
+        box-shadow: 0 0 10px #e74c3c, 0 0 20px #e74c3c, 0 0 30px rgba(231, 76, 60, 0.6);
+    }
+    
+    .live-counter.down:hover {
+        box-shadow: 0 0 10px rgba(231, 76, 60, 1), 
+                    0 0 20px rgba(231, 76, 60, 0.8), 
+                    0 0 30px rgba(231, 76, 60, 0.7),
+                    0 0 40px rgba(231, 76, 60, 0.6),
+                    0 0 50px rgba(231, 76, 60, 0.5),
+                    inset 0 0 15px rgba(231, 76, 60, 0.4),
+                    0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+        filter: brightness(1.2);
+    }
+    
+    .live-counter.total {
+        background: linear-gradient(135deg, rgba(183, 148, 246, 0.18) 0%, rgba(157, 141, 241, 0.08) 100%);
+        border: 2px solid rgba(183, 148, 246, 0.7);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.9), 
+                    0 0 10px rgba(183, 148, 246, 0.7), 
+                    0 0 15px rgba(157, 141, 241, 0.6),
+                    0 0 20px rgba(157, 141, 241, 0.5),
+                    0 0 30px rgba(157, 141, 241, 0.4),
+                    inset 0 0 10px rgba(183, 148, 246, 0.3),
+                    0 2px 8px rgba(0, 0, 0, 0.12);
+        animation: neon-border-pulse 2.5s ease-in-out infinite, neon-breathe 3s ease-in-out infinite;
+    }
+    
+    .live-counter.total::before {
+        background: linear-gradient(90deg, #B794F6, #9D8DF1, #7C6FD8);
+        box-shadow: 0 0 10px #B794F6, 0 0 20px #9D8DF1, 0 0 30px rgba(157, 141, 241, 0.6);
+    }
+    
+    .live-counter.total:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 1), 
+                    0 0 20px rgba(183, 148, 246, 0.8), 
+                    0 0 30px rgba(157, 141, 241, 0.7),
+                    0 0 40px rgba(157, 141, 241, 0.6),
+                    0 0 50px rgba(157, 141, 241, 0.5),
+                    inset 0 0 15px rgba(183, 148, 246, 0.4),
+                    0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+        filter: brightness(1.2);
+    }
+    
+    .counter-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.9;
+        margin-bottom: 0.35rem;
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.6), 
+                     0 0 10px rgba(255, 255, 255, 0.4);
+    }
+    
+    .counter-value {
+        font-size: 2.25rem;
+        font-weight: 800;
+        line-height: 1;
+        margin: 0.35rem 0;
+        animation: neon-breathe 2s ease-in-out infinite;
+    }
+    
+    .live-counter.up .counter-value {
+        text-shadow: 0 0 5px #2ecc71, 
+                     0 0 10px #2ecc71, 
+                     0 0 15px #2ecc71,
+                     0 0 20px rgba(46, 204, 113, 0.8),
+                     0 0 30px rgba(46, 204, 113, 0.6);
+    }
+    
+    .live-counter.down .counter-value {
+        text-shadow: 0 0 5px #e74c3c, 
+                     0 0 10px #e74c3c, 
+                     0 0 15px #e74c3c,
+                     0 0 20px rgba(231, 76, 60, 0.8),
+                     0 0 30px rgba(231, 76, 60, 0.6);
+    }
+    
+    .live-counter.total .counter-value {
+        text-shadow: 0 0 5px #B794F6, 
+                     0 0 10px #B794F6, 
+                     0 0 15px #9D8DF1,
+                     0 0 20px rgba(157, 141, 241, 0.8),
+                     0 0 30px rgba(157, 141, 241, 0.6);
+    }
+    
+    .counter-icon {
+        font-size: 1.5rem;
+        margin-bottom: 0.35rem;
+        opacity: 0.9;
+    }
+    
+    .counter-direction {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 0.35rem;
+    }
+    
+    .processing-status {
+        background: linear-gradient(135deg, rgba(183, 148, 246, 0.12) 0%, rgba(157, 141, 241, 0.06) 100%);
         padding: 1rem;
-        background: #ffffff;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-radius: 0.75rem;
+        border: 2px solid rgba(183, 148, 246, 0.6);
+        margin: 1rem 0;
+        text-align: center;
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.7), 
+                    0 0 10px rgba(183, 148, 246, 0.5), 
+                    0 0 15px rgba(157, 141, 241, 0.4),
+                    0 0 20px rgba(157, 141, 241, 0.3),
+                    inset 0 0 8px rgba(183, 148, 246, 0.2);
+    }
+    
+    .processing-status[style*="green"] {
+        border-color: rgba(46, 204, 113, 0.7);
+        box-shadow: 0 0 5px rgba(46, 204, 113, 0.8), 
+                    0 0 10px rgba(46, 204, 113, 0.6), 
+                    0 0 15px rgba(46, 204, 113, 0.5),
+                    0 0 20px rgba(46, 204, 113, 0.4),
+                    inset 0 0 8px rgba(46, 204, 113, 0.3);
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 0.4rem 0.85rem;
+        background: linear-gradient(135deg, #B794F6 0%, #9D8DF1 50%, #7C6FD8 100%);
+        background-size: 200% 200%;
+        color: white;
+        border-radius: 2rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        border: 1px solid rgba(183, 148, 246, 0.6);
+        animation: pulse 2s infinite, neon-border-pulse 2.5s ease-in-out infinite, neon-flow 3s ease infinite;
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.9), 
+                    0 0 10px rgba(183, 148, 246, 0.7), 
+                    0 0 15px rgba(157, 141, 241, 0.6),
+                    0 0 20px rgba(157, 141, 241, 0.5),
+                    inset 0 0 6px rgba(183, 148, 246, 0.3);
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.8), 
+                     0 0 10px rgba(255, 255, 255, 0.5);
+    }
+    
+    .status-badge[style*="green"] {
+        background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+        border-color: rgba(46, 204, 113, 0.7);
+        box-shadow: 0 0 5px rgba(46, 204, 113, 0.9), 
+                    0 0 10px rgba(46, 204, 113, 0.7), 
+                    0 0 15px rgba(46, 204, 113, 0.6),
+                    0 0 20px rgba(46, 204, 113, 0.5),
+                    inset 0 0 6px rgba(46, 204, 113, 0.3);
+        animation: pulse 2s infinite, neon-green-pulse 2.5s ease-in-out infinite;
+    }
+    
+    /* Metrics Styling */
+    div[data-testid="stMetricValue"] {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--primary-color) 0%, #7C6FD8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.95rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.8;
+    }
+    
+    /* Expander Styling */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, rgba(157, 141, 241, 0.1) 0%, rgba(157, 141, 241, 0.05) 100%);
+        border-radius: 0.5rem;
+        font-weight: 600;
+        padding: 0.75rem 1rem;
+    }
+    
+    /* Tabs Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.5rem;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 3rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        padding: 0 1.5rem;
+        transition: all 0.3s ease;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #9D8DF1 0%, #7C6FD8 100%);
+        box-shadow: 0 4px 12px rgba(157, 141, 241, 0.3);
+    }
+    
+    /* Chart Container with Sharp Neon Glow */
+    .chart-container {
+        background: linear-gradient(135deg, var(--secondary-background-color) 0%, rgba(183, 148, 246, 0.05) 100%);
+        padding: 1.5rem;
+        border-radius: 0.75rem;
+        border: 2px solid rgba(183, 148, 246, 0.5);
+        box-shadow: 0 0 5px rgba(183, 148, 246, 0.6), 
+                    0 0 10px rgba(183, 148, 246, 0.4), 
+                    0 0 15px rgba(157, 141, 241, 0.3),
+                    0 0 20px rgba(157, 141, 241, 0.2),
+                    inset 0 0 10px rgba(183, 148, 246, 0.15),
+                    0 4px 12px rgba(0, 0, 0, 0.08);
+        margin: 1rem 0;
+        transition: all 0.3s ease;
+    }
+    
+    .chart-container:hover {
+        box-shadow: 0 0 10px rgba(183, 148, 246, 0.8), 
+                    0 0 20px rgba(183, 148, 246, 0.6), 
+                    0 0 30px rgba(157, 141, 241, 0.5),
+                    0 0 40px rgba(157, 141, 241, 0.4),
+                    inset 0 0 15px rgba(183, 148, 246, 0.25),
+                    0 6px 16px rgba(0, 0, 0, 0.12);
+        border-color: rgba(183, 148, 246, 0.8);
+    }
+    
+    /* Animations */
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+    
+    @keyframes fadeInDown {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    @keyframes slideInLeft {
+        from {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+    
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.8;
+        }
+    }
+    
+    /* Loading Spinner */
+    .stSpinner > div {
+        border-color: var(--primary-color) transparent transparent transparent;
+    }
+    
+    /* Success/Error/Warning Messages */
+    .stSuccess, .stError, .stWarning, .stInfo {
+        border-radius: 0.75rem;
+        border-left-width: 4px;
+        padding: 1rem 1.5rem;
+        font-weight: 500;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Video Container */
+    video {
+        border-radius: 1rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+    
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 2rem;
+        }
+        .metric-card {
+            padding: 1rem;
+        }
+        .live-counter {
+            min-width: 140px;
+            max-width: 180px;
+            padding: 0.75rem 0.5rem;
+        }
+        .counter-value {
+            font-size: 1.75rem;
+        }
+    }
+    
+    /* Additional Layout Optimizations */
+    /* Reduce header spacing */
+    .main-header {
+        margin-bottom: 0.5rem;
+    }
+    
+    .subtitle {
+        margin-bottom: 1.5rem;
+    }
+    
+    /* Compact feature badges */
+    .feature-badge {
+        margin: 0.2rem;
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+    
+    /* Optimize main content columns */
+    [data-testid="column"] {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+    
+    /* Better video info card spacing */
+    .info-card {
+        margin: 0.75rem 0;
+        padding: 1rem;
+    }
+    
+    /* Compact chart containers */
+    .chart-container {
+        padding: 1.25rem;
+        margin: 0.75rem 0;
+    }
+    
+    /* Optimize stats container */
+    .stats-container {
+        padding: 1.5rem;
+        margin: 0.75rem 0;
+    }
+    
+    /* Better spacing for metrics */
+    div[data-testid="stMetricContainer"] {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Compact expanders */
+    .streamlit-expanderHeader {
+        padding: 0.6rem 0.85rem;
+    }
+    
+    /* Optimize sidebar spacing */
+    section[data-testid="stSidebar"] .element-container {
+        margin-bottom: 0.75rem;
+    }
+    
+    section[data-testid="stSidebar"] .stSubheader {
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -117,37 +1102,11 @@ if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
 if 'intermediate_results' not in st.session_state:
     st.session_state.intermediate_results = None
-
-def get_first_frame(video_path: str):
-    """Extract first frame from video for preview."""
-    if not video_path or not os.path.exists(video_path):
-        return None
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return None
-    ret, frame = cap.read()
-    cap.release()
-    if ret:
-        return frame
-    return None
-
-def create_canvas_background(frame, existing_lines=None):
-    """Create background image with existing lines drawn."""
-    if frame is None or not PIL_AVAILABLE:
-        return None
-    bg = frame.copy()
-    if existing_lines:
-        for line in existing_lines:
-            if len(line) == 2:
-                pt1, pt2 = line[0], line[1]
-                cv2.line(bg, pt1, pt2, (0, 255, 0), 3)
-                # Draw endpoints
-                cv2.circle(bg, pt1, 5, (0, 255, 0), -1)
-                cv2.circle(bg, pt2, 5, (0, 255, 0), -1)
-    return Image.fromarray(cv2.cvtColor(bg, cv2.COLOR_BGR2RGB))
+if 'sidebar_collapsed' not in st.session_state:
+    st.session_state.sidebar_collapsed = False
 
 def process_video_streamlit(video_path: str, processor: VideoProcessor, 
-                            progress_bar, status_text) -> dict:
+                            progress_bar, status_text, live_counter_placeholder=None) -> dict:
     """Process video and return results."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -233,6 +1192,37 @@ def process_video_streamlit(video_path: str, processor: VideoProcessor,
                     f"Up: {current_up} | Down: {current_down}"
                 )
                 
+                # Update live counter display with color-coded indicators
+                if live_counter_placeholder:
+                    live_counter_placeholder.markdown(f'''
+                    <div class="live-counter-container">
+                        <div class="live-counter total">
+                            <div class="counter-icon">🚗</div>
+                            <div class="counter-label">Total Vehicles</div>
+                            <div class="counter-value">{current_total}</div>
+                            <div class="counter-direction">Detected</div>
+                        </div>
+                        <div class="live-counter up">
+                            <div class="counter-icon">⬆️</div>
+                            <div class="counter-label">Moving Up</div>
+                            <div class="counter-value" style="color: #2ecc71;">{current_up}</div>
+                            <div class="counter-direction">Heading North/Forward</div>
+                        </div>
+                        <div class="live-counter down">
+                            <div class="counter-icon">⬇️</div>
+                            <div class="counter-label">Moving Down</div>
+                            <div class="counter-value" style="color: #e74c3c;">{current_down}</div>
+                            <div class="counter-direction">Heading South/Backward</div>
+                        </div>
+                    </div>
+                    <div class="processing-status">
+                        <div class="status-badge">🔄 Processing in Progress</div>
+                        <div style="margin-top: 0.5rem; opacity: 0.7;">
+                            Frame {frame_count:,} of {total_frames:,} • {progress:.1f}% Complete
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                
                 # Store intermediate results for real-time statistics display
                 # Update session state every 50 frames for less overhead
                 if frame_count % 50 == 0:
@@ -270,11 +1260,51 @@ def process_video_streamlit(video_path: str, processor: VideoProcessor,
         'track_history': all_tracks
     }
 
-# Main header
-st.markdown('<div class="main-header">🚗 Vehicle Tracking & Counting System</div>', unsafe_allow_html=True)
+# Main header with enhanced design
+st.markdown('''
+<div class="main-header">🚗 Vehicle Tracking & Counting System</div>
+<div class="subtitle">
+    Advanced Computer Vision | Multi-Modal Detection | Real-Time Analysis
+</div>
+''', unsafe_allow_html=True)
+
+# Feature badges
+st.markdown('''
+<div style="text-align: center; margin-bottom: 2rem;">
+    <span class="feature-badge">🎯 YOLOv8 Detection</span>
+    <span class="feature-badge">🔄 Optical Flow</span>
+    <span class="feature-badge">📊 Real-Time Analytics</span>
+    <span class="feature-badge">🎨 Auto ROI Detection</span>
+</div>
+''', unsafe_allow_html=True)
+
+# Inject JavaScript for sidebar collapse
+if st.session_state.sidebar_collapsed:
+    st.markdown('''
+    <script>
+        document.body.classList.add('sidebar-collapsed');
+    </script>
+    <style>
+        section[data-testid="stSidebar"] {
+            width: 0 !important;
+            min-width: 0 !important;
+            overflow: hidden;
+        }
+    </style>
+    ''', unsafe_allow_html=True)
+
+# Sidebar toggle button
+if st.button("☰", key="sidebar_toggle", help="Toggle Sidebar"):
+    st.session_state.sidebar_collapsed = not st.session_state.sidebar_collapsed
+    st.rerun()
 
 # Sidebar for configuration
-st.sidebar.header("⚙️ Configuration")
+    st.sidebar.markdown('''
+    <div style="text-align: center; padding: 1rem 0 2rem 0;">
+        <h2 style="color: var(--primary-color); font-weight: 800; margin-bottom: 0.5rem;">⚙️ Configuration</h2>
+        <p style="opacity: 0.7; font-size: 0.85rem;">Customize your analysis</p>
+    </div>
+    ''', unsafe_allow_html=True)
 
 # Video input
 st.sidebar.subheader("📹 Video Input")
@@ -511,197 +1541,44 @@ if roi_type_lower == 'line':
             # Remove excess lines
             st.session_state.roi_lines = st.session_state.roi_lines[:num_lines]
         
-        # Visual line drawing interface
-        st.sidebar.subheader("✏️ Visual Line Drawing")
-        
-        if video_path and os.path.exists(video_path):
-            # Get video dimensions
-            cap_temp = cv2.VideoCapture(video_path)
-            if cap_temp.isOpened():
-                w = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                cap_temp.release()
-            else:
-                w, h = 1920, 1080  # Default
-        else:
-            w, h = 1920, 1080  # Default
-            st.sidebar.warning("⚠️ Please upload or select a video first to draw lines.")
-        
-        if video_path and os.path.exists(video_path):
-            # Get first frame for preview
-            preview_frame = get_first_frame(video_path)
-            
-            if preview_frame is not None:
-                # Create background with existing lines
-                bg_image = create_canvas_background(preview_frame, st.session_state.roi_lines)
-                
-                # Calculate canvas size (maintain aspect ratio, max width 600px)
-                max_width = 600
-                aspect_ratio = w / h
-                if w > max_width:
-                    canvas_width = max_width
-                    canvas_height = int(max_width / aspect_ratio)
+        # Manual adjustment for each line
+        st.sidebar.subheader("✏️ Manual Line Adjustment")
+        for line_idx in range(num_lines):
+            with st.sidebar.expander(f"Line {line_idx + 1}", expanded=(line_idx == 0)):
+                if video_path and os.path.exists(video_path):
+                    cap_temp = cv2.VideoCapture(video_path)
+                    if cap_temp.isOpened():
+                        w = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        h = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        cap_temp.release()
+                    else:
+                        w, h = 1920, 1080  # Default
                 else:
-                    canvas_width = w
-                    canvas_height = h
+                    w, h = 1920, 1080  # Default
                 
-                if CANVAS_AVAILABLE:
-                    st.sidebar.markdown("**Draw lines on the preview frame:**")
-                    st.sidebar.markdown("💡 **Tip:** Draw a line by clicking and dragging. Each stroke creates a line from start to end point.")
-                    
-                    # Drawable canvas - using freedraw mode, we'll treat each stroke as a line
-                    canvas_result = st_canvas(
-                        fill_color="rgba(0, 255, 0, 0.2)",
-                        stroke_width=4,
-                        stroke_color="#00FF00",
-                        background_image=bg_image if bg_image else None,
-                        update_streamlit=True,
-                        width=canvas_width,
-                        height=canvas_height,
-                        drawing_mode="freedraw",
-                        point_display_radius=6,
-                        key="line_drawing_canvas",
-                        display_toolbar=True
-                    )
-                    
-                    # Convert canvas drawings to line coordinates
-                    # For freedraw mode, extract paths and use first/last points as line endpoints
-                    if canvas_result and canvas_result.json_data:
-                        new_lines = []
-                        objects = canvas_result.json_data.get("objects", [])
-                        canvas_w = canvas_result.json_data.get("canvasWidth", canvas_width)
-                        canvas_h = canvas_result.json_data.get("canvasHeight", canvas_height)
-                        
-                        for obj in objects:
-                            if obj.get("type") == "path":
-                                # Extract path points - path is typically a list of [x, y] coordinates
-                                path = obj.get("path", [])
-                                if len(path) >= 2:
-                                    # Get first point (start of stroke)
-                                    start = path[0]
-                                    # Get last point (end of stroke)
-                                    end = path[-1]
-                                    
-                                    # Handle different path formats and ensure we get numeric values
-                                    try:
-                                        if isinstance(start, (list, tuple)) and len(start) >= 2:
-                                            x1_val, y1_val = start[0], start[1]
-                                        elif isinstance(start, dict):
-                                            x1_val, y1_val = start.get("x", 0), start.get("y", 0)
-                                        else:
-                                            continue
-                                        
-                                        if isinstance(end, (list, tuple)) and len(end) >= 2:
-                                            x2_val, y2_val = end[0], end[1]
-                                        elif isinstance(end, dict):
-                                            x2_val, y2_val = end.get("x", 0), end.get("y", 0)
-                                        else:
-                                            continue
-                                        
-                                        # Convert to float/int, handling nested structures
-                                        def extract_number(val):
-                                            """Extract numeric value from potentially nested structure."""
-                                            if isinstance(val, (int, float)):
-                                                return float(val)
-                                            elif isinstance(val, (list, tuple)) and len(val) > 0:
-                                                return extract_number(val[0])
-                                            elif isinstance(val, dict):
-                                                return extract_number(val.get("x", val.get("y", 0)))
-                                            else:
-                                                return 0.0
-                                        
-                                        x1 = extract_number(x1_val)
-                                        y1 = extract_number(y1_val)
-                                        x2 = extract_number(x2_val)
-                                        y2 = extract_number(y2_val)
-                                        
-                                        # Ensure all values are numeric (not sequences)
-                                        if not all(isinstance(v, (int, float)) for v in [x1, y1, x2, y2]):
-                                            continue
-                                        
-                                        # Scale to actual frame dimensions
-                                        scale_x = float(w) / float(canvas_w)
-                                        scale_y = float(h) / float(canvas_h)
-                                        x1 = max(0, min(w - 1, int(float(x1) * scale_x)))
-                                        y1 = max(0, min(h - 1, int(float(y1) * scale_y)))
-                                        x2 = max(0, min(w - 1, int(float(x2) * scale_x)))
-                                        y2 = max(0, min(h - 1, int(float(y2) * scale_y)))
-                                        
-                                        # Only add if line has meaningful length
-                                        if abs(x2 - x1) > 10 or abs(y2 - y1) > 10:
-                                            new_lines.append([(x1, y1), (x2, y2)])
-                                    except (TypeError, ValueError, IndexError) as e:
-                                        # Skip this path if we can't extract valid coordinates
-                                        continue
-                        
-                        if new_lines:
-                            # Update session state with new lines
-                            # Keep only the number of lines requested
-                            st.session_state.roi_lines = new_lines[:num_lines]
-                            # If we have fewer lines than requested, add default ones
-                            while len(st.session_state.roi_lines) < num_lines:
-                                line_y = h // 2 + (len(st.session_state.roi_lines) - num_lines // 2) * (h // (num_lines + 1))
-                                st.session_state.roi_lines.append([(w // 4, line_y), (3 * w // 4, line_y)])
-                    
-                    # Display current lines info
-                    if st.session_state.roi_lines:
-                        st.sidebar.markdown("---")
-                        st.sidebar.markdown(f"**Current Lines: {len(st.session_state.roi_lines)}**")
-                        for idx, line in enumerate(st.session_state.roi_lines[:num_lines]):
-                            pt1, pt2 = line[0], line[1]
-                            st.sidebar.text(f"Line {idx + 1}: ({pt1[0]}, {pt1[1]}) → ({pt2[0]}, {pt2[1]})")
-                    
-                    # Clear and reset buttons
-                    col1, col2 = st.sidebar.columns(2)
-                    with col1:
-                        if st.button("🗑️ Clear All", key="clear_lines"):
-                            st.session_state.roi_lines = []
-                            st.rerun()
-                    with col2:
-                        if st.button("🔄 Reset", key="reset_lines_visual"):
-                            # Reset to default horizontal lines
-                            default_lines = []
-                            for i in range(num_lines):
-                                line_y = h // 2 + (i - num_lines // 2) * (h // (num_lines + 1))
-                                default_lines.append([(w // 4, line_y), (3 * w // 4, line_y)])
-                            st.session_state.roi_lines = default_lines
-                            st.rerun()
+                # Get current line coordinates
+                if line_idx < len(st.session_state.roi_lines):
+                    current_line = st.session_state.roi_lines[line_idx]
+                    x1, y1 = current_line[0]
+                    x2, y2 = current_line[1]
                 else:
-                    # Fallback to slider-based input if canvas is not available
-                    st.sidebar.warning("⚠️ Canvas drawing not available. Using coordinate sliders instead.")
-                    st.sidebar.subheader("✏️ Manual Line Adjustment (Fallback)")
-                    for line_idx in range(num_lines):
-                        with st.sidebar.expander(f"Line {line_idx + 1}", expanded=(line_idx == 0)):
-                            # Get current line coordinates
-                            if line_idx < len(st.session_state.roi_lines):
-                                current_line = st.session_state.roi_lines[line_idx]
-                                x1, y1 = current_line[0]
-                                x2, y2 = current_line[1]
-                            else:
-                                x1, y1 = w // 4, h // 2
-                                x2, y2 = 3 * w // 4, h // 2
-                            
-                            # Sliders for line endpoints
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.write("**Start Point**")
-                                x1_new = st.slider("X1", 0, w, x1, key=f"x1_{line_idx}")
-                                y1_new = st.slider("Y1", 0, h, y1, key=f"y1_{line_idx}")
-                            with col2:
-                                st.write("**End Point**")
-                                x2_new = st.slider("X2", 0, w, x2, key=f"x2_{line_idx}")
-                                y2_new = st.slider("Y2", 0, h, y2, key=f"y2_{line_idx}")
-                            
-                            # Update line if changed
-                            if (x1_new, y1_new) != (x1, y1) or (x2_new, y2_new) != (x2, y2):
-                                if line_idx >= len(st.session_state.roi_lines):
-                                    st.session_state.roi_lines.append([(x1_new, y1_new), (x2_new, y2_new)])
-                                else:
-                                    st.session_state.roi_lines[line_idx] = [(x1_new, y1_new), (x2_new, y2_new)]
-            else:
-                st.sidebar.error("❌ Could not load video frame for preview.")
-        else:
-            st.sidebar.info("📹 Upload or select a video to enable visual line drawing.")
+                    x1, y1 = w // 4, h // 2
+                    x2, y2 = 3 * w // 4, h // 2
+                
+                # Sliders for line endpoints
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Start Point**")
+                    x1_new = st.slider("X1", 0, w, x1, key=f"x1_{line_idx}")
+                    y1_new = st.slider("Y1", 0, h, y1, key=f"y1_{line_idx}")
+                with col2:
+                    st.write("**End Point**")
+                    x2_new = st.slider("X2", 0, w, x2, key=f"x2_{line_idx}")
+                    y2_new = st.slider("Y2", 0, h, y2, key=f"y2_{line_idx}")
+                
+                # Update line if changed
+                if (x1_new, y1_new) != (x1, y1) or (x2_new, y2_new) != (x2, y2):
+                    st.session_state.roi_lines[line_idx] = [(x1_new, y1_new), (x2_new, y2_new)]
         
         # Reset to auto-detected button
         if st.sidebar.button("🔄 Reset to Auto-Detected", key="reset_lines"):
@@ -739,7 +1616,7 @@ display_mode = 'clean'
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("📊 Video Processing")
+    st.markdown('<h3 style="color: var(--primary-color); font-weight: 700; margin-bottom: 1.5rem;">🎬 Video Processing</h3>', unsafe_allow_html=True)
     
     if video_path and os.path.exists(video_path):
         # Display video info
@@ -751,7 +1628,17 @@ with col1:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             duration = total_frames / fps if fps > 0 else 0
             
-            st.info(f"📹 **Video Info:** {width}x{height} @ {fps} FPS, {total_frames} frames ({duration:.1f}s)")
+            st.markdown(f'''
+            <div class="info-card">
+                <h4 style="margin: 0 0 0.75rem 0; color: var(--primary-color); font-weight: 700;">📹 Video Information</h4>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
+                    <div><strong>Resolution:</strong> {width} × {height}px</div>
+                    <div><strong>Frame Rate:</strong> {fps} FPS</div>
+                    <div><strong>Total Frames:</strong> {total_frames:,}</div>
+                    <div><strong>Duration:</strong> {duration:.1f}s</div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
             cap.release()
         
         # ROI setup: Auto-detect or set default ROI if not provided
@@ -848,7 +1735,7 @@ with col1:
                     cap_temp.release()
         
         # Process button
-        if st.button("🚀 Process Video", type="primary"):
+        if st.button("🚀 Process Video", type="primary", use_container_width=True):
             with st.spinner("Initializing processor..."):
                 # Use ROI points/lines from session state (should be set above if None)
                 roi_points = st.session_state.roi_points
@@ -871,6 +1758,10 @@ with col1:
                 st.session_state.processor = processor
             
             # Process video
+            # Create live counter display
+            st.markdown('<h4 style="color: var(--primary-color); font-weight: 700; margin: 1.5rem 0;">🎬 Live Processing Status</h4>', unsafe_allow_html=True)
+            live_counter_placeholder = st.empty()
+            
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -879,7 +1770,8 @@ with col1:
                     video_path,
                     processor,
                     progress_bar,
-                    status_text
+                    status_text,
+                    live_counter_placeholder
                 )
             
             if results:
@@ -892,10 +1784,42 @@ with col1:
                     file_size = os.path.getsize(output_video_path)
                     if file_size > 0:
                         st.session_state.processing_results = results
-                        st.success("✅ Video processing completed!")
+                        
+                        # Show final counter summary
+                        final_counts = results['final_counts']
+                        live_counter_placeholder.markdown(f'''
+                        <div class="live-counter-container">
+                            <div class="live-counter total">
+                                <div class="counter-icon">🚗</div>
+                                <div class="counter-label">Total Vehicles</div>
+                                <div class="counter-value">{final_counts['total']}</div>
+                                <div class="counter-direction">✅ Final Count</div>
+                            </div>
+                            <div class="live-counter up">
+                                <div class="counter-icon">⬆️</div>
+                                <div class="counter-label">Moved Up</div>
+                                <div class="counter-value" style="color: #2ecc71;">{final_counts['up']}</div>
+                                <div class="counter-direction">✅ North/Forward</div>
+                            </div>
+                            <div class="live-counter down">
+                                <div class="counter-icon">⬇️</div>
+                                <div class="counter-label">Moved Down</div>
+                                <div class="counter-value" style="color: #e74c3c;">{final_counts['down']}</div>
+                                <div class="counter-direction">✅ South/Backward</div>
+                            </div>
+                        </div>
+                        <div class="processing-status" style="background: linear-gradient(135deg, rgba(46, 204, 113, 0.1) 0%, rgba(46, 204, 113, 0.05) 100%); border-color: rgba(46, 204, 113, 0.3);">
+                            <div class="status-badge" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">✅ Processing Complete</div>
+                            <div style="margin-top: 0.5rem; opacity: 0.7;">
+                                Successfully processed {results['total_frames']:,} frames at {results['fps']} FPS
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        
+                        st.success("✅ Video processing completed successfully!")
                         
                         # Display output video
-                        st.subheader("📹 Processed Video")
+                        st.markdown('<h3 style="color: var(--primary-color); font-weight: 700; margin: 2rem 0 1rem 0;">📹 Processed Video</h3>', unsafe_allow_html=True)
                         try:
                             st.video(output_video_path)
                         except Exception as e:
@@ -922,10 +1846,22 @@ with col1:
             else:
                 st.error("❌ Failed to process video. Please check the video file and try again.")
     else:
-        st.warning("⚠️ Please select or upload a video file to begin processing.")
+        st.markdown('''
+        <div class="info-card" style="text-align: center; padding: 3rem 2rem;">
+            <h3 style="color: var(--primary-color); font-weight: 700; margin-bottom: 1rem;">🎥 Ready to Get Started?</h3>
+            <p style="opacity: 0.8; margin-bottom: 1.5rem; font-size: 1.1rem;">
+                Select a demo video or upload your own to begin vehicle tracking and counting
+            </p>
+            <div style="margin-top: 2rem;">
+                <span class="feature-badge" style="margin: 0.5rem;">👈 Choose Video Source</span>
+                <span class="feature-badge" style="margin: 0.5rem;">⚙️ Configure Settings</span>
+                <span class="feature-badge" style="margin: 0.5rem;">🚀 Process Video</span>
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
 
 with col2:
-    st.subheader("📈 Statistics")
+    st.markdown('<h3 style="color: var(--primary-color); font-weight: 700; margin-bottom: 1.5rem;">📈 Statistics & Analytics</h3>', unsafe_allow_html=True)
     
     # Only show statistics after video processing completes and video is displayed
     # Don't show statistics during processing - wait until video is shown
@@ -933,10 +1869,20 @@ with col2:
         results = st.session_state.processing_results
         final_counts = results['final_counts']
         
-        # Metrics
-        st.metric("Total Vehicles", final_counts['total'])
-        st.metric("Direction Up", final_counts['up'])
-        st.metric("Direction Down", final_counts['down'])
+        # Enhanced Metrics with Icons
+        st.markdown('''
+        <div class="stats-container">
+            <h4 style="color: var(--text-color); margin-bottom: 1rem; font-weight: 700;">Vehicle Count Summary</h4>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        col_metric1, col_metric2, col_metric3 = st.columns(3)
+        with col_metric1:
+            st.metric("🚗 Total", final_counts['total'])
+        with col_metric2:
+            st.metric("⬆️ Up", final_counts['up'])
+        with col_metric3:
+            st.metric("⬇️ Down", final_counts['down'])
         
         # Show which lines were crossed if multiple lines were used
         if st.session_state.processing_results and 'processor' in st.session_state and st.session_state.processor:
@@ -954,35 +1900,74 @@ with col2:
         
         # Count history chart
         if results['count_history']:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown('<h4 style="color: var(--primary-color); font-weight: 700; margin-bottom: 1rem;">📊 Vehicle Count Over Time</h4>', unsafe_allow_html=True)
+            
             df_counts = pd.DataFrame(results['count_history'])
             
             fig = px.line(
                 df_counts,
                 x='frame',
                 y=['total', 'up', 'down'],
-                title='Vehicle Count Over Time',
                 labels={'frame': 'Frame Number', 'value': 'Count', 'variable': 'Direction'},
-                color_discrete_map={'total': '#1f77b4', 'up': '#2ca02c', 'down': '#d62728'}
+                color_discrete_map={'total': '#9D8DF1', 'up': '#2ecc71', 'down': '#e74c3c'}
             )
-            fig.update_layout(height=300)
+            fig.update_layout(
+                height=300,
+                hovermode='x unified',
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Inter, sans-serif", size=12),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    bgcolor='rgba(0,0,0,0)'
+                ),
+                margin=dict(l=10, r=10, t=30, b=10)
+            )
+            fig.update_traces(line=dict(width=3))
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(157, 141, 241, 0.1)')
+            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(157, 141, 241, 0.1)')
+            
             st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             
             # Track count chart
             if results['track_history']:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.markdown('<h4 style="color: var(--primary-color); font-weight: 700; margin-bottom: 1rem;">🎯 Active Tracks Over Time</h4>', unsafe_allow_html=True)
+                
                 df_tracks = pd.DataFrame({
                     'frame': range(len(results['track_history'])),
                     'tracks': results['track_history']
                 })
                 
-                fig_tracks = px.line(
+                fig_tracks = px.area(
                     df_tracks,
                     x='frame',
                     y='tracks',
-                    title='Active Tracks Over Time',
                     labels={'frame': 'Frame Number', 'tracks': 'Number of Tracks'}
                 )
-                fig_tracks.update_layout(height=250)
+                fig_tracks.update_layout(
+                    height=250,
+                    hovermode='x unified',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(family="Inter, sans-serif", size=12),
+                    margin=dict(l=10, r=10, t=30, b=10)
+                )
+                fig_tracks.update_traces(
+                    fillcolor='rgba(157, 141, 241, 0.3)',
+                    line=dict(color='#9D8DF1', width=3)
+                )
+                fig_tracks.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(157, 141, 241, 0.1)')
+                fig_tracks.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(157, 141, 241, 0.1)')
+                
                 st.plotly_chart(fig_tracks, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
             
             # Export CSV
             csv = df_counts.to_csv(index=False)
@@ -994,15 +1979,31 @@ with col2:
                 use_container_width=True
             )
     else:
-        st.info("Process a video to see statistics here.")
+        st.markdown('''
+        <div class="stats-container" style="text-align: center; padding: 2rem;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📊</div>
+            <h4 style="color: var(--text-color); opacity: 0.8; font-weight: 600;">Statistics Panel</h4>
+            <p style="opacity: 0.6; margin-top: 0.5rem;">
+                Process a video to view detailed analytics and insights
+            </p>
+        </div>
+        ''', unsafe_allow_html=True)
 
-# Footer
+# Footer with enhanced design
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #666;'>"
-    "Multi-Modal Vehicle Tracking and Counting System | "
-    "CPS843 - Introduction to Computer Vision | Fall 2025"
-    "</div>",
-    unsafe_allow_html=True
-)
+st.markdown('''
+<div style="text-align: center; padding: 2rem 0;">
+    <div style="margin-bottom: 1rem;">
+        <span class="feature-badge" style="background: linear-gradient(135deg, rgba(157, 141, 241, 0.2) 0%, rgba(157, 141, 241, 0.1) 100%); color: var(--text-color); box-shadow: none;">
+            Multi-Modal Vehicle Tracking & Counting System
+        </span>
+    </div>
+    <div style="color: var(--text-color); opacity: 0.6; font-size: 0.9rem;">
+        Introduction to Computer Vision 
+    </div>
+    <div style="margin-top: 1rem; opacity: 0.5; font-size: 0.8rem;">
+        Powered by YOLOv8 • OpenCV • Streamlit
+    </div>
+</div>
+''', unsafe_allow_html=True)
 

@@ -18,17 +18,20 @@ class YOLODetector:
         7: 'truck'
     }
     
-    def __init__(self, model_size='n', confidence_threshold=0.3, min_box_size=20):
+    def __init__(self, model_size='s', confidence_threshold=0.3, min_box_size=20):
         """
         Initialize YOLO detector.
         
         Args:
-            model_size: YOLO model size ('n', 's', 'm', 'l', 'x')
+            model_size: YOLO model size ('n', 's', 'm', 'l', 'x') - default 's' for better accuracy
             confidence_threshold: Minimum confidence for detections
             min_box_size: Minimum bounding box size in pixels (filter small detections)
         """
         try:
             from ultralytics import YOLO
+            # Default to 's' (small) for better accuracy while still being fast
+            if model_size == 'n':
+                model_size = 's'  # Upgrade nano to small for better accuracy
             self.yolo = YOLO(f'yolov8{model_size}.pt')
             self.available = True
             print(f"✅ YOLOv8{model_size} loaded successfully (confidence: {confidence_threshold}, min_box_size: {min_box_size}px)")

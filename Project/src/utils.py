@@ -213,10 +213,10 @@ def draw_tracks(frame, tracks, max_history=10, roi_points=None, display_mode='cl
     return frame
 
 
-def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=False, show_direction=True):
+def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=False, show_direction=True, use_double_line=False):
     """
     Draw ROI on frame with optional highlighting and directional arrows.
-    Supports multiple lines for line ROI type.
+    Supports multiple lines for line ROI type and double-line counting visualization.
     
     Args:
         frame: Input frame
@@ -225,6 +225,7 @@ def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=
         roi_type: 'line' or 'polygon'
         highlight: Whether to draw highlighted (thicker, brighter)
         show_direction: Whether to show directional arrows (for line ROI)
+        use_double_line: Whether this is double-line counting mode
         
     Returns:
         frame: Frame with ROI drawn
@@ -248,25 +249,31 @@ def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=
     if roi_type == 'line' and len(lines_to_draw) == 0:
         return frame
     
-    # Adjust appearance based on highlight
+    # Adjust appearance based on highlight - make lines thicker and more visible
     if highlight:
         base_color = (0, 255, 128)  # Brighter green
-        thickness = 5
-        circle_radius = 10
+        thickness = 6
+        circle_radius = 12
     else:
         base_color = (0, 200, 0)  # Darker green
-        thickness = 3
-        circle_radius = 8
+        thickness = 5  # Increased from 3 to 5 for better visibility
+        circle_radius = 10  # Increased from 8 to 10
     
-    # Define colors for multiple lines (cycle through different colors)
-    line_colors = [
-        (0, 200, 0),    # Green
-        (0, 165, 255),   # Orange
-        (255, 0, 255),  # Magenta
-        (255, 255, 0),  # Cyan
-        (0, 255, 255),  # Yellow
-        (255, 0, 0),    # Blue
-    ]
+    # Define colors for multiple lines - special colors for double-line mode
+    if use_double_line and len(lines_to_draw) == 2:
+        line_colors = [
+            (0, 255, 255),  # Bright Cyan for Line 1
+            (255, 215, 0),  # Bright Gold/Yellow for Line 2
+        ]
+    else:
+        line_colors = [
+            (0, 255, 0),    # Bright Green for single line
+            (0, 165, 255),   # Orange
+            (255, 0, 255),  # Magenta
+            (255, 255, 0),  # Cyan
+            (0, 255, 255),  # Yellow
+            (255, 0, 0),    # Blue
+        ]
     
     if roi_type == 'line':
         # Draw all lines
@@ -282,18 +289,31 @@ def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=
             x1, y1 = line[0]
             x2, y2 = line[1]
             
-            # Draw line
+            # Draw line with thicker stroke for better visibility
             cv2.line(frame, (x1, y1), (x2, y2), color, thickness)
+            # Draw line again with slightly offset to create glow effect
+            cv2.line(frame, (x1, y1), (x2, y2), tuple(min(255, c + 30) for c in color), max(1, thickness - 2))
             cv2.circle(frame, (x1, y1), circle_radius, color, -1)
             cv2.circle(frame, (x2, y2), circle_radius, color, -1)
             
-            # Draw line label if multiple lines
-            if len(lines_to_draw) > 1:
-                mid_x = (x1 + x2) // 2
-                mid_y = (y1 + y2) // 2
+            # Draw line label - always show for better visibility
+            mid_x = (x1 + x2) // 2
+            mid_y = (y1 + y2) // 2
+            if use_double_line and len(lines_to_draw) == 2:
                 label = f"Line {line_index + 1}"
-                cv2.putText(frame, label, (mid_x - 30, mid_y - 15),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                # Make labels more prominent with background
+                (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 3)
+                cv2.rectangle(frame, (mid_x - text_width // 2 - 5, mid_y - text_height - 5), 
+                             (mid_x + text_width // 2 + 5, mid_y + baseline + 5), (0, 0, 0), -1)
+                cv2.putText(frame, label, (mid_x - text_width // 2, mid_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 3)
+            elif len(lines_to_draw) > 1:
+                label = f"Line {line_index + 1}"
+                (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                cv2.rectangle(frame, (mid_x - text_width // 2 - 5, mid_y - text_height - 5), 
+                             (mid_x + text_width // 2 + 5, mid_y + baseline + 5), (0, 0, 0), -1)
+                cv2.putText(frame, label, (mid_x - text_width // 2, mid_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
             # Draw directional arrows to show which side is "up" vs "down"
             if show_direction:
@@ -317,20 +337,41 @@ def draw_roi(frame, roi_points=None, roi_lines=None, roi_type='line', highlight=
                     # Offset distance for arrows (adjust for multiple lines)
                     offset = 50 + (line_index * 20)  # Stagger arrows for multiple lines
                     
+                    # Define consistent colors for North/South directions per line
+                    if use_double_line and len(lines_to_draw) == 2:
+                        # Line 1: North = Cyan, South = Orange
+                        # Line 2: North = Green, South = Magenta
+                        if line_index == 0:
+                            north_color = (255, 255, 0)  # Cyan (BGR)
+                            south_color = (0, 165, 255)  # Orange (BGR)
+                            north_label = "N"
+                            south_label = "S"
+                        else:  # line_index == 1
+                            north_color = (0, 255, 0)  # Green (BGR)
+                            south_color = (255, 0, 255)  # Magenta (BGR)
+                            north_label = "N"
+                            south_label = "S"
+                    else:
+                        # Single line: Use default colors
+                        north_color = (150, 220, 255)  # Light blue
+                        south_color = (100, 180, 255)  # Darker blue
+                        north_label = "UP"
+                        south_label = "DOWN"
+                    
                     # Draw arrows on both sides
-                    # Side 1 (positive side - "UP" direction)
+                    # Side 1 (positive side - "North" direction)
                     arrow_start_1 = (int(mid_x + perp_x * offset), int(mid_y + perp_y * offset))
                     arrow_end_1 = (int(mid_x + perp_x * (offset + 30)), int(mid_y + perp_y * (offset + 30)))
-                    cv2.arrowedLine(frame, arrow_start_1, arrow_end_1, (150, 220, 255), 3, tipLength=0.4)
-                    cv2.putText(frame, "UP", (int(mid_x + perp_x * (offset + 40)), int(mid_y + perp_y * (offset + 40))),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 220, 255), 2)
+                    cv2.arrowedLine(frame, arrow_start_1, arrow_end_1, north_color, 3, tipLength=0.4)
+                    cv2.putText(frame, north_label, (int(mid_x + perp_x * (offset + 40)), int(mid_y + perp_y * (offset + 40))),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, north_color, 2)
                     
-                    # Side 2 (negative side - "DOWN" direction)
+                    # Side 2 (negative side - "South" direction)
                     arrow_start_2 = (int(mid_x - perp_x * offset), int(mid_y - perp_y * offset))
                     arrow_end_2 = (int(mid_x - perp_x * (offset + 30)), int(mid_y - perp_y * (offset + 30)))
-                    cv2.arrowedLine(frame, arrow_start_2, arrow_end_2, (100, 180, 255), 3, tipLength=0.4)
-                    cv2.putText(frame, "DOWN", (int(mid_x - perp_x * (offset + 45)), int(mid_y - perp_y * (offset + 40))),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 180, 255), 2)
+                    cv2.arrowedLine(frame, arrow_start_2, arrow_end_2, south_color, 3, tipLength=0.4)
+                    cv2.putText(frame, south_label, (int(mid_x - perp_x * (offset + 45)), int(mid_y - perp_y * (offset + 40))),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, south_color, 2)
     
     elif roi_type == 'polygon' and roi_points is not None and len(roi_points) >= 3:
         color = base_color
