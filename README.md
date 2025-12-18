@@ -166,17 +166,13 @@ real-time-vehicle-tracking-cv/
 
 ---
 
-## 👥 Authors
+## 👥 Author
 
 **Arshia Rahim**  
 Computer Engineering (Software) @ Toronto Metropolitan University  
 GitHub: [@ArshiaRx](https://github.com/ArshiaRx)
 
-**Ansugan Subramaniam**  
-Computer Science @ Toronto Metropolitan University
-
-**Wajeehul Hassan**  
-Computer Science @ Toronto Metropolitan University
+**Collaborators**: Ansugan Subramaniam, Wajeehul Hassan
 
 ---
 

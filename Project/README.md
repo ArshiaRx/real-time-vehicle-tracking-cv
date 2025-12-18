@@ -206,11 +206,11 @@ Project/
 
 ---
 
-## 👥 Authors
+## 👥 Author
 
-**Arshia Rahim** - System architecture, optical flow, Kalman filter, web application  
-**Ansugan Subramaniam** - YOLOv8 integration, vehicle detection optimization  
-**Wajeehul Hassan** - ROI detection, multi-line configuration, statistics visualization
+**Arshia Rahim** - System architecture, optical flow, Kalman filter, web application
+
+**Collaborators**: Ansugan Subramaniam (YOLOv8 integration, vehicle detection optimization), Wajeehul Hassan (ROI detection, multi-line configuration, statistics visualization)
 
 ---
 
