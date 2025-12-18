@@ -1,282 +1,217 @@
-# Vehicle Tracking & Counting System - Technical Documentation
+# Vehicle Tracking & Counting System - User Guide
 
-This document covers the implementation details, architecture decisions, and usage specifics for the vehicle tracking system.
-
----
-
-## 📐 Architecture Overview
-
-The system follows a modular pipeline design:
-
-```
-Input Video/Webcam
-       │
-       ▼
-┌──────────────────┐
-│  Detection       │  ← Either Optical Flow OR YOLOv8
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  Tracking        │  ← Track ID assignment, trajectory history
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  Kalman Filter   │  ← Smooths trajectories (optical flow mode only)
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  Vehicle Counter │  ← ROI crossing detection
-└────────┬─────────┘
-         │
-         ▼
-   Annotated Output + Statistics
-```
+This document provides a practical guide for using the vehicle tracking and counting system.
 
 ---
 
-## 🔧 Core Components
+## 🚀 Quick Setup
 
-### 1. Video Processor (`src/video_processor.py`)
-
-The main orchestrator. Initializes all components and runs the frame-by-frame loop.
-
-```python
-processor = VideoProcessor(
-    use_kalman=True,      # Enable trajectory smoothing
-    roi_type='line',      # 'line' or 'polygon'
-    roi_points=None,      # User-defined or auto-detected
-    use_yolo=False,       # Toggle YOLO vs optical flow
-    yolo_confidence=0.4,  # Detection threshold
-    min_box_size=20       # Filter tiny detections
-)
-```
-
-### 2. Optical Flow Tracker (`src/optical_flow_tracker.py`)
-
-Uses **Lucas-Kanade sparse optical flow** to track feature points across frames.
-
-**How it works:**
-1. Detect "good features to track" using Shi-Tomasi corner detection
-2. Track those points frame-to-frame using Lucas-Kanade
-3. Manage track lifecycle (create, update, delete)
-
-**Parameters** (in code):
-```python
-lk_params = dict(
-    winSize=(15, 15),    # Search window size
-    maxLevel=2,          # Pyramid levels
-    criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
-)
-
-feature_params = dict(
-    maxCorners=500,      # Max features to track
-    qualityLevel=0.01,   # Feature quality threshold
-    minDistance=10,      # Min distance between features
-    blockSize=7
-)
-```
-
-**Limitations:**
-- Struggles with vehicles that have similar colors to the road
-- Can't detect stationary vehicles
-- Features may drift or get lost in low-texture areas
-
-### 3. YOLO Detector (`src/yolo_detector.py`)
-
-Wraps **YOLOv8** for vehicle detection. More robust than optical flow but slower.
-
-**Vehicle classes detected** (COCO IDs):
-- 2: car
-- 3: motorcycle
-- 5: bus
-- 7: truck
-
-**Key features:**
-- Confidence thresholding
-- Minimum box size filtering (removes distant/small detections)
-- Track ID assignment using IoU matching between frames
-
-### 4. Kalman Filter (`src/kalman_filter.py`)
-
-Implements a **constant velocity model** for trajectory smoothing.
-
-**State vector:** `[x, y, vx, vy]` (position + velocity)
-
-**Why it helps:**
-- Smooths noisy optical flow measurements
-- Predicts position during brief occlusions
-- Provides velocity estimates
-
-**Note:** Kalman filtering is disabled when using YOLO mode (YOLO's built-in tracking is already smooth).
-
-### 5. Vehicle Counter (`src/vehicle_counter.py`)
-
-Handles ROI-based counting logic.
-
-**Line ROI:**
-- Detects when a track crosses from one side to the other
-- Determines direction (up/down) based on crossing vector
-
-**Polygon ROI:**
-- Tracks whether each vehicle is inside or outside
-- Counts entries and exits separately
-
-**Anti-double-counting:**
-- Each track ID can only trigger one count
-- Cooldown period prevents rapid re-counting
-
-### 6. Auto ROI Detector (`src/auto_roi_detector.py`)
-
-Automatically suggests a counting line by analyzing vehicle movement patterns in the first few seconds of video. Uses YOLO to detect vehicles and estimates the main flow direction.
-
----
-
-## 🎮 Usage Examples
-
-### Command Line
+### Installation
 
 ```bash
-# Basic - optical flow tracking
-python main.py --video data/sample_traffic_test2.mp4
-
-# YOLO detection (recommended for better accuracy)
-python main.py --video data/sample_traffic_test2.mp4 --yolo
-
-# Adjust YOLO sensitivity
-python main.py --video data/sample_traffic_test2.mp4 --yolo --confidence 0.5 --min-box-size 30
-
-# Custom direction labels
-python main.py --video data/sample_traffic_test2.mp4 --direction-up "Northbound" --direction-down "Southbound"
-
-# Save output without display (batch processing)
-python main.py --video data/sample_traffic_test2.mp4 --yolo --no-display --output output/result.mp4
-
-# Polygon ROI instead of line
-python main.py --video data/sample_traffic_test2.mp4 --roi-type polygon
-
-# Adjust playback speed
-python main.py --video data/sample_traffic_test2.mp4 --speed 2.0
+pip install -r requirements.txt
 ```
 
-### Web Interface
+### Run the Web Interface
 
 ```bash
 streamlit run app.py
 ```
 
-Features:
-- Upload videos or use demo files
-- Adjust parameters with sliders
-- Auto-detect optimal counting line
-- Download processed videos and CSV statistics
-- Real-time progress tracking
+The application will open in your browser at `http://localhost:8501`
 
 ---
 
-## ⚙️ Configuration
+## 💻 Usage
 
-Default values are in `config.py`. You can modify these or pass them as CLI arguments.
+### Web Interface (Recommended)
+
+1. **Start the application**: Run `streamlit run app.py`
+2. **Select video source**: 
+   - Choose from demo videos in the `data/` folder, or
+   - Upload your own MP4 or MOV file
+3. **Configure parameters**:
+   - **Use YOLOv8 Detection**: Enable for better accuracy (recommended)
+   - **YOLO Confidence Threshold**: 0.4 recommended (balances accuracy and false positives)
+   - **Minimum Box Size**: Filter out small detections (default: 20 pixels)
+4. **Set up ROI**:
+   - **Auto-Detect**: Let the system find optimal counting line using YOLOv8
+   - **Manual**: Draw your own line or polygon
+5. **Process**: Click "PROCESS VIDEO" and wait for results
+6. **View results**: Download processed video and CSV statistics
+
+### Command Line Interface
+
+```bash
+# Basic usage with optical flow
+python main.py --video data/sample_traffic_test2.mp4
+
+# With YOLO detection (recommended)
+python main.py --video data/sample_traffic_test2.mp4 --yolo
+
+# Adjust confidence threshold
+python main.py --video data/sample_traffic_test2.mp4 --yolo --confidence 0.4
+
+# Custom minimum box size
+python main.py --video data/sample_traffic_test2.mp4 --yolo --min-box-size 30
+
+# Polygon ROI instead of line
+python main.py --video data/sample_traffic_test2.mp4 --roi-type polygon
+```
+
+---
+
+## ⚙️ Configuration Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `YOLO_CONFIDENCE_THRESHOLD` | 0.4 | Min confidence for YOLO detections |
+| `YOLO_CONFIDENCE_THRESHOLD` | 0.4 | Minimum confidence for YOLO detections (0.1-0.9) |
 | `YOLO_MIN_BOX_SIZE` | 20 | Filter boxes smaller than this (pixels) |
-| `MAX_TRACK_LENGTH` | 30 | Max points in track history |
-| `MIN_TRACK_LENGTH` | 5 | Min points before track is valid |
+| `MAX_TRACK_LENGTH` | 30 | Maximum points in track history |
+| `MIN_TRACK_LENGTH` | 5 | Minimum points before track is valid |
+
+### Confidence Threshold Guidelines
+
+- **0.4 (Recommended)**: Best balance between accuracy (90-95%) and false positives
+- **0.1**: Higher recall, captures more vehicles but includes more false positives (15-20%)
+- **0.5+**: Higher precision, fewer false positives but may miss smaller vehicles
 
 ---
 
-## 🐛 Troubleshooting
+## 🎯 Key Features Explained
+
+### Detection Methods
+
+**Optical Flow (Lucas-Kanade)**
+- Fast processing (60+ FPS)
+- Tracks feature points across frames
+- Good for videos with clear vehicle features
+- May struggle with similar-colored vehicles
+
+**YOLOv8 Deep Learning**
+- High accuracy (90-95% at threshold 0.4)
+- Detects complete vehicles as objects
+- More robust to lighting and appearance changes
+- Slower processing (10-15 FPS on CPU)
+
+### ROI Types
+
+**Line ROI**
+- Draw a line across the road
+- Counts vehicles crossing from one side to the other
+- Determines direction (up/down) based on crossing vector
+
+**Polygon ROI**
+- Draw a polygon region
+- Counts vehicles entering and exiting separately
+- Useful for counting vehicles in specific zones
+
+### Track IDs
+
+Each detected vehicle is assigned a unique track ID (e.g., ID0, ID1, ID2) that persists across frames. This ensures:
+- No double-counting (each ID counted only once)
+- Consistent tracking throughout the video
+- Accurate counting even with occlusions
+
+---
+
+## 📊 Understanding Results
+
+### Processed Video Output
+
+The annotated video shows:
+- **Track IDs**: Numbers on each vehicle (ID0, ID1, etc.)
+- **Trajectory Paths**: Colored trails showing vehicle movement
+- **Bounding Boxes**: Detection boxes around vehicles
+- **ROI Lines**: Visual representation of counting boundaries
+
+### Statistics Panel
+
+- **Total Vehicles**: Total count of all vehicles crossing ROI
+- **Direction Up**: Vehicles moving in one direction
+- **Direction Down**: Vehicles moving in opposite direction
+- **Count History Chart**: Frame-by-frame count progression
+- **Active Tracks Chart**: Number of active tracks over time
+
+### CSV Export
+
+Download frame-by-frame statistics including:
+- Frame number
+- Total count
+- Up direction count
+- Down direction count
+
+---
+
+## 🔧 Troubleshooting
 
 ### No vehicles detected
 
-- **Optical flow mode**: Check if video has enough texture/contrast. Try YOLO mode.
-- **YOLO mode**: Lower the confidence threshold (`--confidence 0.3`)
+- **Optical flow mode**: Try YOLO mode for better detection
+- **YOLO mode**: Lower confidence threshold (try 0.3 or 0.2)
+- Check video quality and lighting conditions
 
 ### Vehicles being double-counted
 
-- ROI might be too close to where vehicles slow down/stop
-- Try repositioning the counting line
-- Increase `min_box_size` to filter jittery small detections
+- Reposition the counting line away from where vehicles slow down
+- Increase minimum box size to filter jittery detections
+- Use multiple lines for validation
 
-### Tracking IDs keep changing
+### Slow processing
 
-- Common with optical flow when vehicles have similar colors
-- Use YOLO mode for more stable tracking
-- This is a known limitation of appearance-agnostic tracking
-
-### Slow performance
-
-- Use `--no-display` for batch processing
-- Lower video resolution
-- YOLO is slower than optical flow (~10-15 FPS vs ~60 FPS on CPU)
+- YOLOv8 is slower than optical flow (~10-15 FPS vs 60+ FPS)
+- Lower video resolution for faster processing
+- Use optical flow mode for real-time applications
 
 ### Streamlit won't start
 
 ```bash
-# Try this instead of 'streamlit run app.py'
+# Try this instead
 python -m streamlit run app.py
 ```
 
 ---
 
-## 📊 Output Files
+## 📁 Project Structure
 
-Processed videos are saved to `output/` with the suffix `_tracked.mp4`.
-
-The web interface also provides:
-- CSV export of frame-by-frame counts
-- Interactive charts (count over time, active tracks)
-
----
-
-## 🔮 Future Work
-
-- [ ] Frontend web application (React/TypeScript) for better UX
-- [ ] RTSP stream support for live camera feeds
-- [ ] Vehicle type classification (separate counts by car/truck/bus)
-- [ ] Speed estimation using perspective calibration
-- [ ] Database integration for historical analytics
-- [ ] GPU acceleration for real-time YOLO inference
-
----
-
-## 🧪 Testing
-
-Run the test suite to verify components work:
-
-```bash
-python test_system.py
 ```
-
-This tests:
-- Kalman filter prediction/update
-- Vehicle counter crossing detection
-- Optical flow tracker initialization
-- Video processor integration
+Project/
+├── app.py                  # Streamlit web interface
+├── main.py                 # Command-line entry point
+├── config.py               # Configuration parameters
+├── requirements.txt        # Python dependencies
+│
+├── src/                    # Core modules
+│   ├── video_processor.py      # Main processing pipeline
+│   ├── optical_flow_tracker.py # Lucas-Kanade tracking
+│   ├── yolo_detector.py        # YOLOv8 detection wrapper
+│   ├── kalman_filter.py        # Trajectory smoothing
+│   ├── vehicle_counter.py      # ROI-based counting logic
+│   ├── auto_roi_detector.py    # Automatic ROI detection
+│   └── utils.py                # Visualization helpers
+│
+├── data/                   # Sample input videos
+└── output/                 # Processed video outputs
+```
 
 ---
 
 ## 📚 Algorithm References
 
-- **Lucas-Kanade Optical Flow**: Lucas, B. D., & Kanade, T. (1981). "An iterative image registration technique with an application to stereo vision."
-- **Kalman Filter**: Kalman, R. E. (1960). "A New Approach to Linear Filtering and Prediction Problems."
-- **Shi-Tomasi Corners**: Shi, J., & Tomasi, C. (1994). "Good features to track."
-- **YOLO**: Redmon, J., et al. (2016). "You Only Look Once: Unified, Real-Time Object Detection."
+- **Lucas-Kanade Optical Flow**: Lucas, B. D., & Kanade, T. (1981)
+- **Kalman Filter**: Kalman, R. E. (1960)
+- **Shi-Tomasi Corners**: Shi, J., & Tomasi, C. (1994)
+- **YOLO**: Redmon, J., et al. (2016)
+- **YOLOv8**: Jocher, G., Chaurasia, A., & Qiu, J. (2023)
 
 ---
 
-## 👤 Author
+## 👥 Authors
 
-**Arshia Rahim**  
-Computer Engineering (Software) @ Toronto Metropolitan University
-
-- GitHub: [@ArshiaRx](https://github.com/ArshiaRx)
-- LinkedIn: [in/arshia-rahim](https://www.linkedin.com/in/arshia-rahim)
+**Arshia Rahim** - System architecture, optical flow, Kalman filter, web application  
+**Ansugan Subramaniam** - YOLOv8 integration, vehicle detection optimization  
+**Wajeehul Hassan** - ROI detection, multi-line configuration, statistics visualization
 
 ---
 
-*Built for CPS843 - Introduction to Computer Vision (Fall 2025)*
+*Built for CPS843 - Introduction to Computer Vision (Fall 2025) at Toronto Metropolitan University*
