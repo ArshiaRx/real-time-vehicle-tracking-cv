@@ -6,7 +6,7 @@
 
 A comprehensive real-time vehicle tracking and counting system that combines **optical flow** and **YOLOv8 deep learning** detection for accurate vehicle tracking and counting. Features a modern web-based interface built with Streamlit for easy video processing and analysis.
 
-Developed as part of **CPS843 - Introduction to Computer Vision** at Toronto Metropolitan University.
+Developed as part of **CPS843 - Introduction to Computer Vision** at Toronto Metropolitan University. Formerly known as RyersonU.
 
 ---
 
