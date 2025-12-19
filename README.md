@@ -43,6 +43,7 @@ The system processes videos in chunks, providing real-time feedback and progress
 ### Results Visualization
 
 ![Results with Threshold 0.4](docs/images/0.4_result.png)
+![Results with Threshold 0.4](docs/images/0.1_result.png)
 
 Processed videos show:
 - **Track IDs**: Each vehicle is assigned a unique ID (e.g., ID0, ID1, ID2)
