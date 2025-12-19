@@ -37,6 +37,7 @@ The web interface provides an intuitive dashboard with:
 ### Processing Interface
 
 ![Processing at Confidence 0.4](docs/images/ui_0.4.jpg)
+![Processing at Confidence 0.4](docs/images/ui_0.1.jpg)
 
 The system processes videos in chunks, providing real-time feedback and progress updates. You can adjust confidence thresholds to balance between detection accuracy and false positive rates.
 
